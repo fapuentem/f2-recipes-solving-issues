@@ -1,0 +1,153 @@
+#+TITLE: Quectel-CM Troubleshooting & Hardening (FD Exhaustion)
+#+AUTHOR: Fabricio Puente Mansilla
+#+PROPERTY: header-args:sh :results output :exports both
+#+OPTIONS: toc:2
+
+* Context
+We observed periodic LTE/5G connectivity failures while using *quectel-CM*.
+System logs show:
+
+- ~errno:24 (Too many open files)~
+- ~Bad file descriptor / No support for INET~
+- udhcpc failing to open sysfs nodes:
+  - ~/sys/class/net/wwan0/qmi/raw_ip~
+  - ~/sys/class/net/wwan0/link_state~
+
+Root cause: quectel-CM hits its soft file descriptor limit (1024), leading to failures in network management.
+
+* Quick Diagnosis
+
+** Get the quectel-cm PID
+#+begin_src sh :results output replace :exports both
+  systemctl show -p MainPID --value quectel-cm
+#+end_src
+
+** Count open file descriptors (FDs) for the service
+#+begin_src sh :results output replace :exports both :dir /sudo::
+  pid=$(systemctl show -p MainPID --value quectel-cm)
+  echo "PID=$pid"
+  sudo ls -1 /proc/$pid/fd | wc -l
+#+end_src
+
+** Check open files limits for the process
+#+begin_src sh :results output replace :exports both :dir /sudo::
+  pid=$(systemctl show -p MainPID --value quectel-cm)
+  cat /proc/$pid/limits | egrep -i 'open files'
+#+end_src
+
+** Inspect recent quectel-CM logs
+#+begin_src sh :results output replace :exports both
+  tail -n 80 /var/log/quectel-CM.log
+#+end_src
+
+** Inspect systemd status logs for quectel-cm
+#+begin_src sh :results output replace :exports both :dir /sudo::
+  sudo systemctl status quectel-cm.service --no-pager -l
+#+end_src
+
+* Mitigation 1: Raise FD limit (systemd LimitNOFILE)
+This buys stability even if there is a slow FD leak.
+
+** Create systemd override
+#+begin_src sh
+  sudo systemctl edit quectel-cm.service
+#+end_src
+
+Paste the following into the editor:
+
+#+begin_src ini
+[Service]
+LimitNOFILE=65536
+#+end_src
+
+** Reload and restart service
+#+begin_src sh
+  sudo systemctl daemon-reload
+  sudo systemctl restart quectel-cm.service
+#+end_src
+
+** Verify new limits and FD count after restart
+#+begin_src sh
+  pid=$(systemctl show -p MainPID --value quectel-cm)
+  echo "PID=$pid"
+  cat /proc/$pid/limits | egrep -i 'open files'
+  sudo ls -1 /proc/$pid/fd | wc -l
+#+end_src
+
+* Mitigation 2: Provide udhcpc default.script at expected path
+quectel-CM logs indicate it expects:
+
+~/usr/share/udhcpc/default.script~
+
+but it is missing (errno 2). This can prevent correct route/DNS setup.
+
+** Install default.script
+Adjust the source path if your quectel-CM source directory differs.
+
+#+begin_src sh
+  sudo mkdir -p /usr/share/udhcpc
+  sudo cp /home/nvidia/Downloads/quectel-CM/default.script /usr/share/udhcpc/default.script
+  sudo chmod +x /usr/share/udhcpc/default.script
+#+end_src
+
+** Restart quectel-cm
+#+begin_src sh
+  sudo systemctl restart quectel-cm.service
+#+end_src
+
+* Monitoring: Track FD growth over time
+If FD count keeps increasing steadily, it's likely a leak in quectel-CM/udhcpc flow.
+
+#+begin_src sh
+  pid=$(systemctl show -p MainPID --value quectel-cm)
+  watch -n 30 "date; sudo ls -1 /proc/$pid/fd | wc -l"
+#+end_src
+
+* Optional Hardening: Daily restart timer (pragmatic)
+If the FD leak persists and you need production stability, schedule a controlled restart.
+
+** Create timer unit
+#+begin_src sh :results output replace :exports both :dir /sudo::
+  sudo tee /etc/systemd/system/quectel-cm-restart.timer >/dev/null <<'EOF'
+  [Unit]
+  Description=Daily restart of quectel-cm to avoid FD leak
+
+  [Timer]
+  OnCalendar=*-*-* 04:15:00
+  Persistent=true
+
+  [Install]
+  WantedBy=timers.target
+  EOF
+#+end_src
+
+** Create service unit
+#+begin_src sh :results output replace :exports both :dir /sudo::
+  sudo tee /etc/systemd/system/quectel-cm-restart.service >/dev/null <<'EOF'
+  [Unit]
+  Description=Restart quectel-cm
+
+  [Service]
+  Type=oneshot
+  ExecStart=/bin/systemctl restart quectel-cm.service
+  EOF
+#+end_src
+
+** Enable timer
+#+begin_src sh :results output replace :exports both :dir /sudo::
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now quectel-cm-restart.timer
+#+end_src
+
+** Verify timer is active
+#+begin_src sh :results output replace :exports both :dir /sudo::
+  systemctl list-timers --all | grep -i quectel
+#+end_src
+
+
+* Appendix: Routing sanity check
+Ensure eth1 is primary and wwan0 is fallback by metric.
+
+#+begin_src sh :results output replace :exports both
+  ip route
+#+end_src
