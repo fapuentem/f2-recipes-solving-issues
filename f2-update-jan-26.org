@@ -1,0 +1,285 @@
+#+TITLE: F2 Update Recipe (Jetson Orin NX)
+#+AUTHOR: Fabricio Puente Mansilla
+#+PROPERTY: header-args:shell :shell /bin/bash :results output :exports both :session f2
+#+OPTIONS: toc:2
+#+EXCLUDE_TAGS: noexport
+#+OPTIONS: email:t toc:nil num:nil
+
+* Code :noexport:
+#+NAME: startup
+#+BEGIN_SRC elisp :results none
+  (load-theme 'modus-vivendi)
+  (setf fill-column 100)
+    (org-babel-do-load-languages
+     'org-babel-load-languages
+     '((shell . t)))
+#+END_SRC
+
+* Variables (edit these)
+#+name: vars
+#+begin_src shell :results output replace :exports both
+  set -euo pipefail
+
+  # --- EDIT THESE ---
+  REPO_OWNER="VisiontechProjects"
+  REPO_NAME="F2_App_Main"
+  TAG="v1.1-rc"                         # release tag to deploy
+  APP_DIR="$HOME/projects/F2-App"       # current deployed folder
+  DOWNLOAD_DIR="$HOME/Downloads"
+  STAMP="$(date +%Y%m%d-%H%M%S)"
+  BACKUP_DIR="$HOME/backups"
+  BACKUP_TGZ="$BACKUP_DIR/F2-App-backup-$STAMP.tar.gz"
+
+  # GitHub auth (only needed for private repos / rate limits)
+  export GITHUB_TOKEN="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"    # or load from /etc/f2.env
+  echo "REPO=$REPO_OWNER/$REPO_NAME TAG=$TAG"
+  echo "APP_DIR=$APP_DIR"
+#+end_src
+
+#+RESULTS: vars
+: REPO=VisiontechProjects/F2_App_Main TAG=v1.1-rc
+: APP_DIR=/home/fabricio/projects/F2-App-gh
+
+* Remove the last lines of ~/.bashrc (F2 aliases + PATH block)
+We remove everything from the marker line "# F2  alias" to EOF.
+
+#+begin_src shell :results output replace :exports both
+  set -euo pipefail
+
+  BASHRC="$HOME/.bashrc"
+  MARKER="# F2  alias"
+
+  if grep -qF "$MARKER" "$BASHRC"; then
+    cp -a "$BASHRC" "$BASHRC.bak.$(date +%Y%m%d-%H%M%S)"
+    # delete from marker to end of file
+    sed -i "/$(printf '%s' "$MARKER" | sed 's/[^^]/[&]/g; s/\^/\\^/g')/,\$d" "$BASHRC"
+    echo "Removed F2 alias block from ~/.bashrc (backup created)."
+  else
+    echo "Marker not found; ~/.bashrc unchanged."
+  fi
+#+end_src
+
+#+RESULTS:
+: Marker not found; ~/.bashrc unchanged.
+
+* Remove root crontab entry that autostarts F2-App
+We only remove the specific @reboot line.
+
+#+begin_src shell :results output replace :exports both :dir /sudo::
+  set -euo pipefail
+
+  LINE='@reboot sleep 150; /bin/python3 /home/nvidia/projects/F2-App/main.py'
+
+  # Dump root crontab (if none, exit cleanly)
+  TMP="$(mktemp)"
+  if sudo crontab -l >"$TMP" 2>/dev/null; then
+    if grep -qF "$LINE" "$TMP"; then
+      cp -a "$TMP" "$TMP.bak.$(date +%Y%m%d-%H%M%S)"
+      grep -vF "$LINE" "$TMP" | sudo crontab -
+      echo "Removed root crontab @reboot line."
+    else
+      echo "Crontab line not present; nothing to remove."
+    fi
+  else
+    echo "Root has no crontab; nothing to remove."
+  fi
+  rm -f "$TMP"
+#+end_src
+
+* Stop any running /home/nvidia/projects/F2-App/main.py processes
+We kill the python process and any wrapper "/bin/sh -c sleep ...; python ...".
+
+#+begin_src shell :results output replace :exports both :dir /sudo::
+  set -euo pipefail
+
+  TARGET="/home/nvidia/projects/F2-App/main.py"
+
+  echo "Before:"
+  ps -eo pid,user,cmd | grep -F "$TARGET" | grep -v grep || true
+
+  # Try graceful first
+  sudo pkill -f "$TARGET" || true
+  sleep 2
+
+  # If still running, hard kill
+  if ps -eo pid,cmd | grep -F "$TARGET" | grep -v grep >/dev/null; then
+    echo "Still running; sending SIGKILL..."
+    sudo pkill -9 -f "$TARGET" || true
+  fi
+
+  echo "After:"
+  ps -eo pid,user,cmd | grep -F "$TARGET" | grep -v grep || true
+#+end_src
+
+* Backup current ~/projects/F2-App into a tar.gz
+Creates ~/backups if missing.
+
+#+begin_src shell :results output replace :exports both :dir /sudo::
+  set -euo pipefail
+
+  mkdir -p "$BACKUP_DIR"
+
+  if [ -d "$APP_DIR" ]; then
+    tar -czf "$BACKUP_TGZ" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
+    echo "Backup created: $BACKUP_TGZ"
+  else
+    echo "APP_DIR not found ($APP_DIR). Skipping backup."
+  fi
+#+end_src
+
+* Download release tarball into ~/Downloads and deploy to ~/projects/F2-App
+This uses the auto-generated tag tarball URL:
+https://github.com/<owner>/<repo>/archive/refs/tags/<tag>.tar.gz
+
+Then it extracts and replaces ~/projects/F2-App.
+
+#+begin_src bash :results output replace :exports both :session f2
+  set -Eeuo pipefail
+
+  mkdir -p "$DOWNLOAD_DIR"
+
+  TARBALL_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/tags/${TAG}.tar.gz"
+  TARBALL_PATH="${DOWNLOAD_DIR}/${REPO_NAME}-${TAG}.tar.gz"
+  EXTRACT_DIR="${DOWNLOAD_DIR}/${REPO_NAME}-${TAG}-extract-${STAMP}"
+
+  echo "Downloading: $TARBALL_URL"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    curl -L -H "Authorization: Bearer $GITHUB_TOKEN" -o "$TARBALL_PATH" "$TARBALL_URL"
+  else
+    curl -L -o "$TARBALL_PATH" "$TARBALL_URL"
+  fi
+
+  echo "Saved to: $TARBALL_PATH"
+  mkdir -p "$EXTRACT_DIR"
+  tar -xzf "$TARBALL_PATH" -C "$EXTRACT_DIR"
+
+  # Find the single top-level extracted directory (e.g., F2_App_Main-1.1-rc/)
+  SRC_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+  if [ -z "$SRC_DIR" ]; then
+    echo "ERROR: could not find extracted source folder in $EXTRACT_DIR"
+    ls -la "$EXTRACT_DIR"
+    exit 1
+  fi
+  echo "Extracted source dir: $SRC_DIR"
+
+  # Rollback folder (backup of current deploy dir)
+  ROLLBACK_DIR="${APP_DIR}.rollback.${STAMP}"
+  if [ -d "$APP_DIR" ]; then
+    mv "$APP_DIR" "$ROLLBACK_DIR"
+    echo "Moved current app to: $ROLLBACK_DIR"
+  fi
+
+  # Create fresh target directory
+  mkdir -p "$APP_DIR"
+
+  # Deploy CONTENTS of SRC_DIR into APP_DIR (no extra nesting)
+  # The trailing slashes are important: "$SRC_DIR/" -> copy contents, not the folder itself.
+  rsync -a --delete "$SRC_DIR/" "$APP_DIR/"
+
+  echo "Deployed contents to: $APP_DIR"
+  ls -la "$APP_DIR" | head -n 80
+#+end_src
+
+#+RESULTS:
+
+* F2 App deployment
+
+The F2 App is the main software stack controlling the behavior of the Smart Controller.
+
+** Create and Use Python Virtual Environment
+
+Create and populate a Python virtual environment for the F2 App:
+
+#+BEGIN_SRC bash :results output replace :dir ~/projects/F2-App
+  # Create virtual environment
+  python3 -m venv .venv
+
+  # Install required packages using the venv's pip
+  .venv/bin/pip install -r requirements.txt
+#+END_SRC
+
+** Systemd service setup
+
+*** Create the systemd unit
+#+begin_src bash :dir /sudo::/etc/systemd/system :results output replace :exports both
+  set -euo pipefail
+
+  tee /etc/systemd/system/f2-app.service >/dev/null <<'UNIT'
+  [Unit]
+  Description=F2 Smart Controller App
+  Wants=network-online.target
+  After=network-online.target
+
+  # If you depend on a specific serial device, you can also use:
+  # After=dev-ttyTHS0.device
+  # Requires=dev-ttyTHS0.device
+
+  [Service]
+  Type=simple
+  User=nvidia
+  Group=dialout
+  # If you also use GPIO/I2C/Video on Jetson, uncomment as needed:
+  # SupplementaryGroups=gpio,i2c,video
+
+  WorkingDirectory=/home/nvidia/projects/F2-App
+  Environment=PYTHONUNBUFFERED=1
+  Environment=LANG=C.UTF-8
+  # Optional: load environment variables from a file
+  # EnvironmentFile=/home/nvidia/projects/F2-App/.env
+
+  # Replicate your current crontab delay
+  ExecStartPre=/bin/sleep 90
+  TimeoutStartSec=100
+
+  # Start with venv python
+  ExecStart=/home/nvidia/projects/F2-App/.venv/bin/python3 /home/nvidia/projects/F2-App/main.py
+
+  # Robustness
+  Restart=on-failure
+  RestartSec=5
+  TimeoutStopSec=20
+
+  [Install]
+  WantedBy=multi-user.target
+  UNIT
+#+end_src
+
+*** Reload systemd, enable, and start
+#+begin_src bash :dir /sudo:: :results output replace :exports both
+  set -euo pipefail
+  sudo systemctl daemon-reload
+  sudo systemctl enable f2-app.service
+  sudo systemctl start f2-app.service
+  systemctl --no-pager --full status f2-app.service || true
+#+end_src
+
+*** Ensure serial/device permissions (Jetson)
+#+begin_src bash :dir /sudo:: :results output replace :exports both
+  set -euo pipefail
+  # Add 'nvidia' to dialout for /dev/tty* access
+  sudo usermod -aG dialout nvidia
+
+  # Optional: if your app uses these subsystems
+  # sudo usermod -aG gpio nvidia
+  # sudo usermod -aG i2c nvidia
+  # sudo usermod -aG video nvidia
+
+  # Show current groups (will reflect after re-login/reboot)
+  id nvidia || true
+  echo "If 'dialout' is not listed above, log out/in or reboot."
+#+end_src
+
+* Optional: verify version and start manually
+#+begin_src shell
+  set -euo pipefail
+  python3 --version
+  ls -la "$HOME/projects/F2-App" | head -n 50
+#+end_src
+
+# Local Variables:
+# org-confirm-babel-evaluate: (lambda (lang body) (not (string= lang "elisp")))
+# eval: (progn
+#         (when (fboundp 'org-babel-goto-named-src-block)
+#           (org-babel-goto-named-src-block "startup")
+#           (org-babel-execute-src-block)))
+# End:
