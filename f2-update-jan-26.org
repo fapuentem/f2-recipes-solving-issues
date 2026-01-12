@@ -17,7 +17,7 @@
 
 * Variables (edit these)
 #+name: vars
-#+begin_src bash :results output replace :exports both
+#+begin_src bash :results output replace :exports both :session f2
   set -euo pipefail
 
   # --- EDIT THESE ---
@@ -119,23 +119,6 @@ We kill the python process and any wrapper "/bin/sh -c sleep ...; python ...".
   jq -r '.Connectors | to_entries[] | "\(.key) -> \(.value.mode)"' "$CONFIG"
 #+end_src
 
-* Backup current ~/projects/F2-App into a tar.gz
-Creates ~/backups if missing.
-
-#+begin_src bash :results output replace :exports both
-  set -euo pipefail
-
-  mkdir -p "$BACKUP_DIR"
-
-  if [ -d "$APP_DIR" ]; then
-    tar -czf "$BACKUP_TGZ" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
-    echo "Backup created: $BACKUP_TGZ"
-    rm -rf "$APP_DIR"
-  else
-    echo "APP_DIR not found ($APP_DIR). Skipping backup."
-  fi
-#+end_src
-
 * Backup F2 certificates (independent)
 
 #+begin_src bash :session f2 :results output replace :exports both
@@ -162,6 +145,24 @@ Creates ~/backups if missing.
   echo "Contents:"
   tar -tzf "$CERTS_BACKUP"
 #+end_src
+
+* Backup current ~/projects/F2-App into a tar.gz
+Creates ~/backups if missing.
+
+#+begin_src bash :results output replace :exports both :session f2
+  set -euo pipefail
+
+  mkdir -p "$BACKUP_DIR"
+
+  if [ -d "$APP_DIR" ]; then
+    tar -czf "$BACKUP_TGZ" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
+    echo "Backup created: $BACKUP_TGZ"
+    rm -rf "$APP_DIR"
+  else
+    echo "APP_DIR not found ($APP_DIR). Skipping backup."
+  fi
+#+end_src
+
 
 * Download release tarball into ~/Downloads and deploy to ~/projects/F2-App
 This uses the auto-generated tag tarball URL:
