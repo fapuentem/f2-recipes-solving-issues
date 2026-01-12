@@ -1,0 +1,192 @@
+#+title: Jetson Orin NX – /var/log growth troubleshooting (deleted-but-open files case)
+#+author: Fabricio Puente Mansilla
+#+options: toc:2 num:nil
+#+startup: show2levels
+
+* Scope and symptoms
+This document covers troubleshooting cases where:
+- ~/var/log~ appears large (several GB)
+- Visible files inside ~/var/log~ are small or empty
+- systemd-journald usage is low
+- Disk space is not reclaimed after log deletion
+
+Typical symptom:
+#+begin_example
+/var/log ≈ several GB
+but
+du -xh /var/log/* shows almost nothing
+#+end_example
+
+This usually indicates *deleted log files still held open by running processes*.
+
+* Baseline verification
+** Check overall disk usage
+#+begin_src sh
+  sudo df -h
+#+end_src
+
+** Check inode usage (rule out inode exhaustion)
+#+begin_src sh
+  df -ih
+#+end_src
+
+* Step 1: Measure /var and /var/log
+** High-level /var breakdown
+#+begin_src sh
+  sudo du -xh --max-depth=1 /var | sort -h
+#+end_src
+
+** Inspect /var/log content
+#+begin_src sh
+  sudo du -xh /var/log | sort -h | tail -60
+#+end_src
+
+Key observation in this scenario:
+- ~/var/log~ is large
+- individual subdirectories are tiny
+
+* Step 2: Rule out journald
+** Check systemd journal disk usage
+#+begin_src sh
+  sudo journalctl --disk-usage
+#+end_src
+
+Interpretation:
+- If journald << /var/log size → journald is NOT the problem
+- Example:
+  #+begin_example
+  Archived and active journals take up 108.0M
+  #+end_example
+
+* Diagnosis
+At this point, the only explanation is:
+
+#+begin_quote
+Log files were deleted or rotated, but the writing process
+did not close the file descriptor. Disk space remains allocated
+until the process exits or closes the file.
+#+end_quote
+
+This is a classic Linux behavior.
+
+* Step 3: Identify deleted-but-open log files
+** Find open deleted files under /var/log
+#+begin_src sh
+  sudo lsof +L1 | grep /var/log
+#+end_src
+
+Alternative (global view):
+#+begin_src sh
+  sudo lsof | grep deleted
+#+end_src
+
+Typical output:
+#+begin_example
+rsyslogd  514 root  3w REG  259,1 4294967296 /var/log/syslog (deleted)
+#+end_example
+
+This tells you:
+- Process name
+- PID
+- Log file
+- Size still consuming disk
+
+* Step 4: Free the space safely
+** Preferred method: restart the owning service
+If the process is managed by systemd:
+#+begin_src sh
+sudo systemctl restart <service>
+#+end_src
+
+Common examples:
+#+begin_src sh
+sudo systemctl restart rsyslog
+sudo systemctl restart systemd-journald
+sudo systemctl restart docker
+#+end_src
+
+** Alternative: signal the process
+If restart is not desirable:
+#+begin_src sh
+sudo kill -HUP <PID>
+#+end_src
+
+** Last resort: reboot
+A reboot *always* releases deleted file descriptors:
+#+begin_src sh
+sudo reboot
+#+end_src
+
+* Step 5: Verify recovery
+#+begin_src sh
+df -h
+sudo du -sh /var/log
+#+end_src
+
+Expected result:
+- /var/log drops to a few hundred MB
+- Root filesystem regains several GB
+
+* Step 6: Prevent recurrence
+** Ensure logrotate properly signals services
+Check rsyslog configuration:
+#+begin_src sh
+cat /etc/logrotate.d/rsyslog
+#+end_src
+
+Expected content includes:
+#+begin_example
+postrotate
+    invoke-rc.d rsyslog rotate >/dev/null 2>&1 || true
+endscript
+#+end_example
+
+Without this, rsyslog keeps old file descriptors open.
+
+** Verify logrotate is installed and active
+#+begin_src sh
+dpkg -l | grep logrotate
+sudo systemctl status logrotate --no-pager || true
+ls -l /etc/cron.daily/logrotate
+#+end_src
+
+Force a rotation test:
+#+begin_src sh
+sudo logrotate -f /etc/logrotate.conf
+#+end_src
+
+* Step 7: Journald hardening (recommended on Jetson)
+Even if journald was not the issue, limit it proactively.
+
+Edit configuration:
+#+begin_src sh
+sudo nano /etc/systemd/journald.conf
+#+end_src
+
+Recommended settings:
+#+begin_example
+Storage=persistent
+SystemMaxUse=200M
+RuntimeMaxUse=100M
+RateLimitIntervalSec=30s
+RateLimitBurst=500
+MaxRetentionSec=7day
+#+end_example
+
+Apply:
+#+begin_src sh
+sudo systemctl restart systemd-journald
+#+end_src
+
+* Quick decision tree
+- /var/log large + journald large → vacuum journald
+- /var/log large + visible logs large → noisy service or kernel spam
+- /var/log large + visible logs tiny → deleted-but-open files (this case)
+- Space not freed after deletion → always check lsof +L1
+
+* Key takeaway
+#+begin_quote
+If disk space does not come back after deleting logs,
+the data is still owned by a running process.
+Find it with lsof, restart it, and the space is freed instantly.
+#+end_quote
