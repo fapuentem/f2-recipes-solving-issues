@@ -111,10 +111,18 @@ We kill the python process and any wrapper "/bin/sh -c sleep ...; python ...".
   ps -eo pid,user,cmd | grep -F "$TARGET" | grep -v grep || true
 #+end_src
 
+* Show old Connector configuration
+
+#+begin_src bash :results output replace :exports both
+  CONFIG="$HOME/projects/F2-App/config/config.json"
+
+  jq -r '.Connectors | to_entries[] | "\(.key) -> \(.value.mode)"' "$CONFIG"
+#+end_src
+
 * Backup current ~/projects/F2-App into a tar.gz
 Creates ~/backups if missing.
 
-#+begin_src shell :results output replace :exports both :dir /sudo::
+#+begin_src shell :results output replace :exports both
   set -euo pipefail
 
   mkdir -p "$BACKUP_DIR"
@@ -122,9 +130,37 @@ Creates ~/backups if missing.
   if [ -d "$APP_DIR" ]; then
     tar -czf "$BACKUP_TGZ" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
     echo "Backup created: $BACKUP_TGZ"
+    rm -rf "$APP_DIR"
   else
     echo "APP_DIR not found ($APP_DIR). Skipping backup."
   fi
+#+end_src
+
+* Backup F2 certificates (independent)
+
+#+begin_src bash :session f2 :results output replace :exports both
+  set -Eeuo pipefail
+
+  CERTS_DIR="$HOME/projects/F2-App/certs"
+  BACKUP_BASE="$HOME/backups"
+  STAMP="$(date +%Y%m%d-%H%M%S)"
+  CERTS_BACKUP="$BACKUP_BASE/F2-certs-backup-$STAMP.tar.gz"
+
+  if [ ! -d "$CERTS_DIR" ]; then
+    echo "ERROR: certs directory not found at $CERTS_DIR"
+    exit 1
+  fi
+
+  mkdir -p "$BACKUP_BASE"
+
+  tar -czf "$CERTS_BACKUP" -C "$CERTS_DIR" .
+
+  echo "Certificates backed up successfully:"
+  echo "  $CERTS_BACKUP"
+
+  echo
+  echo "Contents:"
+  tar -tzf "$CERTS_BACKUP"
 #+end_src
 
 * Download release tarball into ~/Downloads and deploy to ~/projects/F2-App
@@ -268,6 +304,40 @@ Create and populate a Python virtual environment for the F2 App:
   id nvidia || true
   echo "If 'dialout' is not listed above, log out/in or reboot."
 #+end_src
+
+* F2 Maintenance Tools
+
+These utilities simplify system maintenance and provide convenient command-line aliases.
+
+1. Clone the maintenance tools repository:
+   #+NAME: fetch-f2-maintenance-tools
+   #+BEGIN_SRC bash :results output replace :exports both
+     set -euo pipefail
+
+     REPO_URL="https://github.com/fapuentem/f2-maintenance-tools.git"
+     DEST_DIR="$HOME/tools/f2-maintenance-tools"
+
+     echo "🔍 Checking for existing repository..."
+     mkdir -p "$(dirname "$DEST_DIR")"
+
+     if [ -d "$DEST_DIR/.git" ]; then
+       echo "📦 Existing clone found — pulling latest changes..."
+       git -C "$DEST_DIR" pull --quiet --ff-only
+     else
+       echo "⬇️  Cloning repository into $DEST_DIR"
+       git clone --depth=1 "$REPO_URL" "$DEST_DIR"
+     fi
+
+     echo "✅ Repository ready at: $DEST_DIR"
+     git -C "$DEST_DIR" log -1 --oneline
+   #+END_SRC
+
+2. Add F2 aliases to your shell configuration:
+
+   #+BEGIN_SRC sh
+     cat ~/tools/f2-maintenance-tools/alias-f2.sh >> ~/.bashrc
+     # source ~/.bashrc
+   #+END_SRC
 
 * Optional: verify version and start manually
 #+begin_src shell
