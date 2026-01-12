@@ -36,10 +36,6 @@
   echo "APP_DIR=$APP_DIR"
 #+end_src
 
-#+RESULTS: vars
-: REPO=VisiontechProjects/F2_App_Main TAG=v1.1-rc
-: APP_DIR=/home/fabricio/projects/F2-App-gh
-
 * Remove the last lines of ~/.bashrc (F2 aliases + PATH block)
 We remove everything from the marker line "# F2  alias" to EOF.
 
@@ -58,9 +54,6 @@ We remove everything from the marker line "# F2  alias" to EOF.
     echo "Marker not found; ~/.bashrc unchanged."
   fi
 #+end_src
-
-#+RESULTS:
-: Marker not found; ~/.bashrc unchanged.
 
 * Remove root crontab entry that autostarts F2-App
 We only remove the specific @reboot line.
@@ -121,7 +114,7 @@ We kill the python process and any wrapper "/bin/sh -c sleep ...; python ...".
 
 * Backup F2 certificates (independent)
 
-#+begin_src bash :session f2 :results output replace :exports both
+#+begin_src bash :results output replace :exports both :session f2
   set -Eeuo pipefail
 
   CERTS_DIR="$HOME/projects/F2-App/certs"
@@ -157,7 +150,7 @@ Creates ~/backups if missing.
   if [ -d "$APP_DIR" ]; then
     tar -czf "$BACKUP_TGZ" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
     echo "Backup created: $BACKUP_TGZ"
-    rm -rf "$APP_DIR"
+    # rm -rf "$APP_DIR"
   else
     echo "APP_DIR not found ($APP_DIR). Skipping backup."
   fi
@@ -218,6 +211,7 @@ Then it extracts and replaces ~/projects/F2-App.
 #+end_src
 
 #+RESULTS:
+
 
 * F2 App deployment
 
@@ -339,13 +333,6 @@ These utilities simplify system maintenance and provide convenient command-line 
      cat ~/tools/f2-maintenance-tools/alias-f2.sh >> ~/.bashrc
      # source ~/.bashrc
    #+END_SRC
-
-* Optional: verify version and start manually
-#+begin_src bash
-  set -euo pipefail
-  python3 --version
-  ls -la "$HOME/projects/F2-App" | head -n 50
-#+end_src
 
 # Local Variables:
 # org-confirm-babel-evaluate: (lambda (lang body) (not (string= lang "elisp")))
