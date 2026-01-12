@@ -17,7 +17,7 @@
 
 * Variables (edit these)
 #+name: vars
-#+begin_src shell :results output replace :exports both
+#+begin_src bash :results output replace :exports both
   set -euo pipefail
 
   # --- EDIT THESE ---
@@ -43,7 +43,7 @@
 * Remove the last lines of ~/.bashrc (F2 aliases + PATH block)
 We remove everything from the marker line "# F2  alias" to EOF.
 
-#+begin_src shell :results output replace :exports both
+#+begin_src bash :results output replace :exports both
   set -euo pipefail
 
   BASHRC="$HOME/.bashrc"
@@ -65,7 +65,7 @@ We remove everything from the marker line "# F2  alias" to EOF.
 * Remove root crontab entry that autostarts F2-App
 We only remove the specific @reboot line.
 
-#+begin_src shell :results output replace :exports both :dir /sudo::
+#+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
 
   LINE='@reboot sleep 150; /bin/python3 /home/nvidia/projects/F2-App/main.py'
@@ -89,7 +89,7 @@ We only remove the specific @reboot line.
 * Stop any running /home/nvidia/projects/F2-App/main.py processes
 We kill the python process and any wrapper "/bin/sh -c sleep ...; python ...".
 
-#+begin_src shell :results output replace :exports both :dir /sudo::
+#+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
 
   TARGET="/home/nvidia/projects/F2-App/main.py"
@@ -122,7 +122,7 @@ We kill the python process and any wrapper "/bin/sh -c sleep ...; python ...".
 * Backup current ~/projects/F2-App into a tar.gz
 Creates ~/backups if missing.
 
-#+begin_src shell :results output replace :exports both
+#+begin_src bash :results output replace :exports both
   set -euo pipefail
 
   mkdir -p "$BACKUP_DIR"
@@ -332,7 +332,7 @@ These utilities simplify system maintenance and provide convenient command-line 
      git -C "$DEST_DIR" log -1 --oneline
    #+END_SRC
 
-2. Add F2 aliases to your shell configuration:
+2. Add F2 aliases to your bash configuration:
 
    #+BEGIN_SRC sh
      cat ~/tools/f2-maintenance-tools/alias-f2.sh >> ~/.bashrc
@@ -340,7 +340,7 @@ These utilities simplify system maintenance and provide convenient command-line 
    #+END_SRC
 
 * Optional: verify version and start manually
-#+begin_src shell
+#+begin_src bash
   set -euo pipefail
   python3 --version
   ls -la "$HOME/projects/F2-App" | head -n 50
