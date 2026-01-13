@@ -147,6 +147,8 @@ Creates ~/backups if missing.
 
   mkdir -p "$BACKUP_DIR"
 
+  rm -f "$APP_DIR"/logs/app.log
+
   if [ -d "$APP_DIR" ]; then
     tar -czf "$BACKUP_TGZ" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
     echo "Backup created: $BACKUP_TGZ"
@@ -281,7 +283,7 @@ Create and populate a Python virtual environment for the F2 App:
   sudo systemctl daemon-reload
   sudo systemctl enable f2-app.service
   sudo systemctl start f2-app.service
-  systemctl --no-pager --full status f2-app.service || true
+  # systemctl --no-pager --full status f2-app.service || true
 #+end_src
 
 *** Ensure serial/device permissions (Jetson)
