@@ -1,0 +1,721 @@
+#+TITLE: F2 Crowd Scanning - Installation Recipe (Jetson Orin NX)
+#+AUTHOR: Eduardo Torres Urbano
+#+PROPERTY: header-args:bash :results output replace :exports both
+#+OPTIONS: toc:2 num:nil
+#+EXCLUDE_TAGS: noexport
+#+STARTUP: showall
+
+* Code :noexport:
+#+NAME: startup
+#+BEGIN_SRC elisp :results none
+  (load-theme 'modus-vivendi)
+  (setf fill-column 100)
+    (org-babel-do-load-languages
+     'org-babel-load-languages
+     '((shell . t)
+       (emacs-lisp . t)))
+#+END_SRC
+
+* Context
+
+This document provides a step-by-step installation guide for the *FACES 2 Crowd Scanning* application on NVIDIA Jetson Orin NX devices.
+
+#+begin_quote
+The recipe uses absolute paths and can be executed from any directory on the Jetson device.
+All code blocks are designed to be idempotent where possible.
+#+end_quote
+
+** Target environment
+
+| Component              | Path                                                      |
+|------------------------+-----------------------------------------------------------|
+| Project Directory      | /home/nvidia/projects/F2_Crowd_Scanning                   |
+| FaceMe SDK             | /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMeSDK  |
+| Python Virtual Env     | /home/nvidia/projects/F2_Crowd_Scanning/faceme_env        |
+| Configuration          | /home/nvidia/projects/F2_Crowd_Scanning/config/config.ini |
+| Logs                   | /home/nvidia/projects/F2_Crowd_Scanning/logs              |
+
+** System requirements
+
+- NVIDIA Jetson Orin NX
+- JetPack 5.1.2 / Ubuntu 20.04
+- Internet connection for package downloads
+- FaceMe License Key (obtain from administrator)
+
+* Variables (edit these)
+#+name: vars
+#+begin_src bash :results output replace :exports both :session f2cs
+  # --- EDIT THESE ---
+  export PROJECT_DIR="/home/nvidia/projects/F2_Crowd_Scanning"
+  export FACEME_DIR="$PROJECT_DIR/faceme"
+  export VENV_DIR="$PROJECT_DIR/faceme_env"
+  export GITHUB_REPO="https://github.com/VisiontechProjects/F2_Crowd_Scanning.git"
+
+  # FaceMe SDK version
+  export FACEME_SDK_INSTALLER="FaceMe_SDK_Jetson_JetPack513_7.0.0.run"
+  export FACEME_WHEEL="FaceMe-7.0.0-py38-none-manylinux2014_aarch64.whl"
+
+  echo "PROJECT_DIR=$PROJECT_DIR"
+  echo "FACEME_DIR=$FACEME_DIR"
+  echo "VENV_DIR=$VENV_DIR"
+#+end_src
+
+#+RESULTS: vars
+: PROJECT_DIR=/home/nvidia/projects/F2_Crowd_Scanning
+: FACEME_DIR=/home/nvidia/projects/F2_Crowd_Scanning/faceme
+: VENV_DIR=/home/nvidia/projects/F2_Crowd_Scanning/faceme_env
+
+* Phase 1: System Preparation
+
+** Step 1.1: Update system and install dependencies
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  set -euo pipefail
+
+  sudo apt update && sudo apt upgrade -y
+
+  sudo apt install -y \
+      git wget curl unzip tar \
+      build-essential cmake \
+      libssl-dev libffi-dev expect \
+      python3.8 python3-pip python3.8-venv \
+      sendemail rsync bsdutils
+#+end_src
+
+** Step 1.2: Install Jetson Stats (jtop)
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo pip3 install -U jetson-stats
+#+end_src
+
+** Step 1.3: Verify JetPack installation
+
+#+begin_src bash :results output replace :exports both
+  jtop --version || echo "jtop not found - reboot may be required"
+#+end_src
+
+#+RESULTS:
+: jtop 4.3.2
+
+Expected output:
+#+begin_example
+jtop 4.x.x
+#+end_example
+
+* Phase 2: Project Setup
+
+** Step 2.1: Create project directories
+
+#+begin_src bash :results output replace :exports both
+  set -euo pipefail
+
+  mkdir -p /home/nvidia/projects
+  mkdir -p /home/nvidia/tools
+
+  echo "Directories created:"
+  ls -la /home/nvidia/projects
+#+end_src
+
+#+RESULTS:
+: Directories created:
+: total 28
+: drwxrwxr-x  7 nvidia nvidia 4096 Jan 28 12:04 .
+: drwxr-xr-x 20 nvidia nvidia 4096 Jan 28 16:44 ..
+: drwxr-xr-x  3 root   root   4096 Nov 13 15:33 certs
+: drwxrwxr-x 12 nvidia nvidia 4096 Jan 13 17:07 F2-App
+: drwxrwxr-x 12 nvidia nvidia 4096 Jan 28 15:30 F2_Crowd_Scanning
+: drwxrwxr-x 11 nvidia nvidia 4096 Dec  9 13:28 F2_Crowd_Scanning_1
+: drwxrwxr-x 12 nvidia nvidia 4096 Jan 20 13:03 F2_On_Premise_Solution
+
+** Step 2.2: Clone repository
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  set -euo pipefail
+
+  if [ -d "$PROJECT_DIR" ]; then
+      echo "Project directory exists. Pulling latest changes..."
+      cd "$PROJECT_DIR" && git pull
+  else
+      echo "Cloning repository..."
+      git clone "$GITHUB_REPO" "$PROJECT_DIR"
+  fi
+#+end_src
+
+** Step 2.3: Verify clone
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  ls -la "$PROJECT_DIR/" | head -n 20
+#+end_src
+
+* Phase 3: FaceMe SDK Installation
+
+** Step 3.1: Create FaceMe directory
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  mkdir -p "$FACEME_DIR"
+  echo "Created: $FACEME_DIR"
+#+end_src
+
+** Step 3.2: Download FaceMe SDK
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  set -euo pipefail
+
+  INSTALLER_PATH="$FACEME_DIR/$FACEME_SDK_INSTALLER"
+
+  if [ -f "$INSTALLER_PATH" ]; then
+      echo "FaceMe SDK installer already exists."
+  else
+      echo "Downloading FaceMe SDK..."
+      wget --no-check-certificate \
+          "https://www.dropbox.com/scl/fo/9k6aikgfww7d2sa32sihp/ACvv4x9zzycs1Ae2TCqSjGI/FaceMe_SDK_Jetson_JetPack513_7.0.0.run?rlkey=9uiy9xles004huk1axq8q34rb&dl=0" \
+          -O "$INSTALLER_PATH"
+  fi
+
+  ls -la "$FACEME_DIR"/*.run
+#+end_src
+
+** Step 3.3: Make installer executable
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  chmod +x "$FACEME_DIR/$FACEME_SDK_INSTALLER"
+  ls -la "$FACEME_DIR"/*.run
+#+end_src
+
+#+RESULTS:
+: -rwxrwxr-x 1 nvidia nvidia 1354869238 Jan 28 12:08 /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMe_SDK_Jetson_JetPack513_7.0.0.run
+
+** Step 3.4: Run FaceMe SDK installer
+
+#+begin_quote
+*RUN ON JETSON TERMINAL:* This step requires sudo password and takes ~10 minutes.
+Do NOT run from org-babel - the terminal disconnects during installation.
+#+end_quote
+
+*** Option A: Automated (run on Jetson terminal)
+
+Save this script on the Jetson and execute it:
+
+#+begin_src bash :tangle ~/install-faceme.sh :tangle-mode (identity #o755)
+#!/bin/bash
+set -euo pipefail
+
+FACEME_DIR="/home/nvidia/projects/F2_Crowd_Scanning/faceme"
+
+if [ -d "$FACEME_DIR/FaceMeSDK" ]; then
+    echo "FaceMe SDK already installed. Skipping."
+    exit 0
+fi
+
+echo "Running FaceMe SDK installer (~10 minutes)..."
+
+expect << 'EXPECT_EOF'
+set timeout 1200
+spawn /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMe_SDK_Jetson_JetPack513_7.0.0.run
+
+expect {
+    "password for*" {
+        stty -echo
+        expect_user -re "(.*)\n"
+        stty echo
+        send "$expect_out(1,string)\r"
+        exp_continue
+    }
+    "Installation path*" {
+        send "/home/nvidia/projects/F2_Crowd_Scanning/faceme\r"
+        exp_continue
+    }
+    "*extraction models*" {
+        send "VH11_M\r"
+        exp_continue
+    }
+    "*minimum face*" {
+        send "5\r"
+        exp_continue
+    }
+    "*Demo System*" {
+        send "y\r"
+        exp_continue
+    }
+    "*Sample*code*" {
+        send "y\r"
+        exp_continue
+    }
+    "*config above*" {
+        send "y\r"
+        exp_continue
+    }
+    "completely installed" {
+        puts "\n\nFaceMe SDK installation completed!"
+    }
+    timeout {
+        puts "\n\nTimeout - check installation manually"
+        exit 1
+    }
+    eof
+}
+EXPECT_EOF
+
+echo "Done."
+#+end_src
+
+Run on Jetson:
+#+begin_example
+bash ~/install-faceme.sh
+#+end_example
+
+*** Option B: Manual
+
+Run directly on Jetson terminal:
+#+begin_example
+cd /home/nvidia/projects/F2_Crowd_Scanning/faceme
+./FaceMe_SDK_Jetson_JetPack513_7.0.0.run
+#+end_example
+
+Enter these values:
+
+| Prompt                  | Value                                            |
+|-------------------------+--------------------------------------------------|
+| Installation path       | /home/nvidia/projects/F2_Crowd_Scanning/faceme   |
+| Face extraction models  | VH11_M                                           |
+| Minimum face size       | 5                                                |
+| Install Demo System     | y                                                |
+| Install Sample codes    | y                                                |
+| Confirm installation    | y                                                |
+
+*** Verify installation
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  ls -la "$FACEME_DIR/FaceMeSDK/" | head -n 10
+#+end_src
+
+** Step 3.5: Configure environment variables
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  set -euo pipefail
+
+  if ! grep -q "FACEME_HOME" /home/nvidia/.bashrc; then
+      echo "export FACEME_HOME=$FACEME_DIR/FaceMeSDK" >> /home/nvidia/.bashrc
+      echo "FACEME_HOME added to .bashrc"
+  else
+      echo "FACEME_HOME already configured in .bashrc"
+  fi
+
+  # Export for current session (don't source .bashrc - hangs in non-interactive shell)
+  export FACEME_HOME="$FACEME_DIR/FaceMeSDK"
+  echo "FACEME_HOME=$FACEME_HOME"
+#+end_src
+
+** Step 3.6: Verify FaceMe SDK installation
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  ls -la "$FACEME_DIR/FaceMeSDK/" | head -n 20
+#+end_src
+
+* Phase 4: Python Environment Setup
+
+** Step 4.1: Create virtual environment
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  python3 -m venv "$VENV_DIR"
+  echo "Virtual environment created at: $VENV_DIR"
+#+end_src
+
+** Step 4.2: Upgrade pip
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  $VENV_DIR/bin/pip install --upgrade pip
+#+end_src
+
+** Step 4.3: Install FaceMe Python SDK
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  $VENV_DIR/bin/pip install \
+      "$FACEME_DIR/FaceMeSDK/SDK/Other Languages/Python/Bin/gpu/$FACEME_WHEEL"
+#+end_src
+
+** Step 4.4: Install application dependencies
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  $VENV_DIR/bin/pip install -r "$PROJECT_DIR/requirements.txt"
+#+end_src
+
+** Step 4.5: Verify Python environment
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  echo "=== Python Version ==="
+  $VENV_DIR/bin/python3 --version
+
+  echo ""
+  echo "=== FaceMe Package ==="
+  $VENV_DIR/bin/pip show FaceMe
+
+  #echo ""
+  #echo "=== Installed Packages ==="
+  #$VENV_DIR/bin/pip list | head -n 20
+#+end_src
+
+#+RESULTS:
+#+begin_example
+=== Python Version ===
+Python 3.8.10
+
+=== FaceMe Package ===
+Name: FaceMe
+Version: 7.0.0
+Summary: A python layer API to integrate FaceMe SDK into your program for facial recognition features
+Home-page: https://www.cyberlink.com/faceme
+Author: CyberLink FaceMe
+Author-email: FaceMe_US@cyberlink.com
+License: Commercial License
+Location: /home/nvidia/projects/F2_Crowd_Scanning/faceme_env/lib/python3.8/site-packages
+Requires: numpy, opencv-python
+Required-by:
+
+=== Installed Packages ===
+Package            Version
+------------------ --------
+aiohappyeyeballs   2.4.4
+aiohttp            3.10.11
+aiosignal          1.3.1
+annotated-types    0.7.0
+async-timeout      5.0.1
+asyncio            4.0.0
+attrs              25.3.0
+certifi            2026.1.4
+charset-normalizer 3.4.4
+exceptiongroup     1.3.1
+FaceMe             7.0.0
+frozenlist         1.5.0
+idna               3.11
+iniconfig          2.1.0
+multidict          6.1.0
+numpy              1.24.4
+opencv-python      4.5.3.56
+packaging          26.0
+ERROR: Pipe to stdout was broken
+Exception ignored in: <_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>
+BrokenPipeError: [Errno 32] Broken pipe
+#+end_example
+
+* Phase 5: License Activation
+
+** Step 5.1: Get device MAC address
+
+Provide this MAC address to your administrator to generate a license key.
+
+#+begin_src bash :results output replace :exports both
+  echo "=== Network Interfaces ==="
+  ip link show | grep -E "^[0-9]+:|ether"
+
+  echo ""
+  echo "=== Formatted for License Request ==="
+  cat /sys/class/net/eth0/address 2>/dev/null | tr -d ':' || \
+  cat /sys/class/net/eth1/address 2>/dev/null | tr -d ':' || \
+  cat /sys/class/net/eth2/address 2>/dev/null | tr -d ':'
+#+end_src
+
+** Step 5.2: Copy sample script to demo directory
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  cp "$VENV_DIR/lib/python3.8/site-packages/FaceMe/FaceMePythonSample.py" \
+     "$FACEME_DIR/FaceMeSDK/DemoSystem/Program/"
+
+  ls -la "$FACEME_DIR/FaceMeSDK/DemoSystem/Program/FaceMePythonSample.py"
+#+end_src
+
+** Step 5.3: Activate license
+
+#+begin_quote
+*ACTION REQUIRED:* Replace =YOUR_LICENSE_KEY_HERE= with the actual license key before executing.
+#+end_quote
+
+#+NAME: license-key
+#+begin_src text
+YOUR_LICENSE_KEY_HERE
+#+end_src
+
+#+begin_src bash :results output replace :exports both :session f2cs :var LICENSE_KEY=license-key
+  cd "$FACEME_DIR/FaceMeSDK/DemoSystem/Program/"
+
+  $VENV_DIR/bin/python3 FaceMePythonSample.py activatelicense "$LICENSE_KEY"
+#+end_src
+
+** Step 5.4: Configure license key environment variable
+
+#+begin_src bash :results output replace :exports both :session f2cs :var LICENSE_KEY=license-key
+  set -euo pipefail
+
+  if ! grep -q "FACEME_LICENSE_KEY" /home/nvidia/.bashrc; then
+      echo "export FACEME_LICENSE_KEY=\"$LICENSE_KEY\"" >> /home/nvidia/.bashrc
+      echo "FACEME_LICENSE_KEY added to .bashrc"
+  else
+      sed -i "s/export FACEME_LICENSE_KEY=.*/export FACEME_LICENSE_KEY=\"$LICENSE_KEY\"/" /home/nvidia/.bashrc
+      echo "FACEME_LICENSE_KEY updated in .bashrc"
+  fi
+
+  # Export for current session
+  export FACEME_LICENSE_KEY="$LICENSE_KEY"
+  echo "FACEME_LICENSE_KEY configured"
+#+end_src
+
+** Step 5.5: Verify SDK activation
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  cd "$FACEME_DIR/FaceMeSDK/DemoSystem/Program/"
+
+  $VENV_DIR/bin/python3 FaceMePythonSample.py showversion
+#+end_src
+
+#+RESULTS:
+: /home/nvidia/projects/F2_Crowd_Scanning/faceme_env/bin/python3: can't open file 'FaceMePythonSample.py': [Errno 2] No such file or directory
+
+Expected output:
+#+begin_example
+{
+  "Result": "Success",
+  "SDK Version": "7.0.0",
+  "Core Engine Version": "7.0.0"
+}
+#+end_example
+
+* Phase 6: Application Configuration
+
+** Step 6.1: View current configuration
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  cat "$PROJECT_DIR/config/config.ini"
+#+end_src
+
+** Step 6.2: Backup current configuration
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  cp "$PROJECT_DIR/config/config.ini" \
+     "$PROJECT_DIR/config/config.ini.backup.$(date +%Y%m%d)"
+
+  ls -la "$PROJECT_DIR/config/"
+#+end_src
+
+** Step 6.3: Configure cameras
+
+Edit the configuration file to add your camera streams:
+
+#+begin_example
+[FACEME_SDK]
+APP_BUNDLE_PATH = /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMeSDK/DemoSystem/Program
+APP_CACHE_PATH = /home/nvidia/.cache
+APP_DATA_PATH = /home/nvidia/.local/share
+SDK_MODE = VIDEO_RECOGNITION
+
+[LOGS]
+MAX_LOG_SIZE_IN_MB = 10
+LOGGING_LEVEL = DEBUG
+
+[WEB_PLATFORM]
+CHECK_FACE_TEMPLATE_URL = https://faces2-dev-api.faces2.info/api/v1/platform/checkFaceTemplate
+PLATFORM = Vtech@PlatformToken-+
+
+[CAMERA_0]
+VIDEO_PATH = rtsp://user:password@192.168.1.120/cam/realmonitor?channel=1&subtype=2
+TAGS = VT
+NAME = Camera-1
+CAMERA_ID = 1
+#+end_example
+
+* Phase 7: Quick Test
+
+** Step 7.1: Run application manually (smoke test)
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  cd "$PROJECT_DIR"
+
+  $VENV_DIR/bin/python3 "$PROJECT_DIR/main.py"
+#+end_src
+
+Press =ESC= or =Ctrl+C= to stop.
+
+** Step 7.2: Run unit tests
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  cd "$PROJECT_DIR"
+
+  $VENV_DIR/bin/pytest -v "$PROJECT_DIR/tests/"
+#+end_src
+
+* Phase 8: Production Deployment (systemd)
+
+** Step 8.1: Install email helper script
+
+#+begin_src bash :results output replace :exports both :dir /sudo:: :session f2cs
+  sudo install -m755 "$PROJECT_DIR/tools/f2_send_mail.sh" /usr/local/bin/
+#+end_src
+
+** Step 8.2: Create systemd service file
+
+#+begin_src bash :results output replace :exports both :dir /sudo:: :session f2cs :var LICENSE_KEY=license-key
+  set -euo pipefail
+
+  sudo tee /etc/systemd/system/f2_crowd_scanner.service > /dev/null << SERVICEEOF
+[Unit]
+Description=F2 Crowd Scanning FaceMe Service
+After=network.target
+StartLimitBurst=3
+StartLimitIntervalSec=60
+OnFailure=f2_crowd_scanner-email@%n
+
+[Service]
+Type=simple
+WorkingDirectory=$PROJECT_DIR
+ExecStart=/usr/bin/script -q -c "$VENV_DIR/bin/python $PROJECT_DIR/main.py" /dev/null
+Restart=always
+RestartSec=10
+Environment=FACEME_LICENSE_KEY=$LICENSE_KEY
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
+
+  echo "Service file created."
+#+end_src
+
+** Step 8.3: Install email notification service
+
+#+begin_src bash :results output replace :exports both :dir /sudo:: :session f2cs
+  sudo cp "$PROJECT_DIR/tools/f2_crowd_scanner-email@.service" /etc/systemd/system/
+#+end_src
+
+** Step 8.4: Enable and start service
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo systemctl daemon-reload
+  sudo systemctl enable f2_crowd_scanner.service
+  sudo systemctl start f2_crowd_scanner.service
+#+end_src
+
+** Step 8.5: Verify service status
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo systemctl status f2_crowd_scanner.service --no-pager -l
+#+end_src
+
+* Phase 9: Enable FaceMe SDK Debug Logging (Optional)
+
+** Step 9.1: Create log directories
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  # For user sessions
+  mkdir -p /home/nvidia/.local/share/CyberLink/FaceMeSDK/Developer/
+
+  # For root/systemd services
+  sudo mkdir -p /root/.local/share/CyberLink/FaceMeSDK/Developer/
+#+end_src
+
+** Step 9.2: Configure maximum debug level
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  # User environment
+  echo "Severity=0" > /home/nvidia/.local/share/CyberLink/FaceMeSDK/Developer/Logger.txt
+
+  # Root environment (for systemd)
+  echo "Severity=0" | sudo tee /root/.local/share/CyberLink/FaceMeSDK/Developer/Logger.txt
+#+end_src
+
+* Service Management Commands
+
+Quick reference for managing the F2 Crowd Scanner service.
+
+** Start service
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo systemctl start f2_crowd_scanner.service
+#+end_src
+
+** Stop service
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo systemctl stop f2_crowd_scanner.service
+#+end_src
+
+** Restart service
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo systemctl restart f2_crowd_scanner.service
+#+end_src
+
+** View service status
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo systemctl status f2_crowd_scanner.service --no-pager -l
+#+end_src
+
+** View recent logs
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo journalctl -u f2_crowd_scanner -n 100 --no-pager
+#+end_src
+
+** Follow logs in real-time
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo journalctl -u f2_crowd_scanner -f
+#+end_src
+
+** Reset failed service
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo systemctl reset-failed f2_crowd_scanner.service
+  sudo systemctl start f2_crowd_scanner.service
+#+end_src
+
+* Troubleshooting
+
+** Check system logs
+#+begin_src bash :results output replace :exports both
+  dmesg | tail -n 50
+#+end_src
+
+** Verify SDK installation
+#+begin_src bash :results output replace :exports both :session f2cs
+  ls -la "$FACEME_DIR/FaceMeSDK/"
+#+end_src
+
+** Check Python environment
+#+begin_src bash :results output replace :exports both :session f2cs
+  $VENV_DIR/bin/pip list
+#+end_src
+
+** View FaceMe SDK logs
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo ls -la /root/.local/share/CyberLink/FaceMeSDK/Developer/
+  sudo tail -100 /root/.local/share/CyberLink/FaceMeSDK/Developer/FaceMeSDK_*.log 2>/dev/null || echo "No SDK logs found"
+#+end_src
+
+** Reboot device
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo reboot
+#+end_src
+
+* Quick decision tree
+
+- Service not starting → check =journalctl -u f2_crowd_scanner=
+- License error → verify MAC address and re-activate
+- Camera not detected → verify RTSP URL in config.ini
+- FaceMe SDK error → check =$FACEME_HOME= environment variable
+- Python import error → verify virtual environment activation
+
+* Key takeaway
+
+#+begin_quote
+This recipe provides an end-to-end installation path for F2 Crowd Scanning.
+Run each phase sequentially, and verify expected outputs before proceeding.
+For issues, check the Troubleshooting section and service logs.
+#+end_quote
+
+* References
+
+- [[https://developer.nvidia.com/embedded/jetpack][NVIDIA JetPack Installation Guide]]
+- [[https://www.cyberlink.com/faceme][FaceMe SDK Documentation]]
+- [[https://github.com/VisiontechProjects/F2_Crowd_Scanning][F2 Crowd Scanning GitHub Repository]]
+
+# Local Variables:
+# org-confirm-babel-evaluate: (lambda (lang body) (not (string= lang "elisp")))
+# eval: (progn
+#         (when (fboundp 'org-babel-goto-named-src-block)
+#           (org-babel-goto-named-src-block "startup")
+#           (org-babel-execute-src-block)))
+# End:
