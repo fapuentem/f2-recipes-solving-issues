@@ -60,11 +60,6 @@ All code blocks are designed to be idempotent where possible.
   echo "VENV_DIR=$VENV_DIR"
 #+end_src
 
-#+RESULTS: vars
-: PROJECT_DIR=/home/nvidia/projects/F2_Crowd_Scanning
-: FACEME_DIR=/home/nvidia/projects/F2_Crowd_Scanning/faceme
-: VENV_DIR=/home/nvidia/projects/F2_Crowd_Scanning/faceme_env
-
 * Phase 1: System Preparation
 
 ** Step 1.1: Update system and install dependencies
@@ -94,9 +89,6 @@ All code blocks are designed to be idempotent where possible.
   jtop --version || echo "jtop not found - reboot may be required"
 #+end_src
 
-#+RESULTS:
-: jtop 4.3.2
-
 Expected output:
 #+begin_example
 jtop 4.x.x
@@ -115,17 +107,6 @@ jtop 4.x.x
   echo "Directories created:"
   ls -la /home/nvidia/projects
 #+end_src
-
-#+RESULTS:
-: Directories created:
-: total 28
-: drwxrwxr-x  7 nvidia nvidia 4096 Jan 28 12:04 .
-: drwxr-xr-x 20 nvidia nvidia 4096 Jan 28 16:44 ..
-: drwxr-xr-x  3 root   root   4096 Nov 13 15:33 certs
-: drwxrwxr-x 12 nvidia nvidia 4096 Jan 13 17:07 F2-App
-: drwxrwxr-x 12 nvidia nvidia 4096 Jan 28 15:30 F2_Crowd_Scanning
-: drwxrwxr-x 11 nvidia nvidia 4096 Dec  9 13:28 F2_Crowd_Scanning_1
-: drwxrwxr-x 12 nvidia nvidia 4096 Jan 20 13:03 F2_On_Premise_Solution
 
 ** Step 2.2: Clone repository
 
@@ -182,9 +163,6 @@ jtop 4.x.x
   ls -la "$FACEME_DIR"/*.run
 #+end_src
 
-#+RESULTS:
-: -rwxrwxr-x 1 nvidia nvidia 1354869238 Jan 28 12:08 /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMe_SDK_Jetson_JetPack513_7.0.0.run
-
 ** Step 3.4: Run FaceMe SDK installer
 
 #+begin_quote
@@ -192,84 +170,9 @@ jtop 4.x.x
 Do NOT run from org-babel - the terminal disconnects during installation.
 #+end_quote
 
-*** Option A: Automated (run on Jetson terminal)
-
-Save this script on the Jetson and execute it:
-
-#+begin_src bash :tangle /home/nvidia/projects/F2_Crowd_Scanning/tools/install-faceme.sh :tangle-mode (identity #o755)
-#!/bin/bash
-set -euo pipefail
-
-FACEME_DIR="/home/nvidia/projects/F2_Crowd_Scanning/faceme"
-
-if [ -d "$FACEME_DIR/FaceMeSDK" ]; then
-    echo "FaceMe SDK already installed. Skipping."
-    exit 0
-fi
-
-echo "Running FaceMe SDK installer (~10 minutes)..."
-
-expect << 'EXPECT_EOF'
-set timeout 1200
-spawn /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMe_SDK_Jetson_JetPack513_7.0.0.run
-
-expect {
-    "password for*" {
-        stty -echo
-        expect_user -re "(.*)\n"
-        stty echo
-        send "$expect_out(1,string)\r"
-        exp_continue
-    }
-    "Installation path*" {
-        send "/home/nvidia/projects/F2_Crowd_Scanning/faceme\r"
-        exp_continue
-    }
-    "*extraction models*" {
-        send "VH11_M\r"
-        exp_continue
-    }
-    "*minimum face*" {
-        send "5\r"
-        exp_continue
-    }
-    "*Demo System*" {
-        send "y\r"
-        exp_continue
-    }
-    "*Sample*code*" {
-        send "y\r"
-        exp_continue
-    }
-    "*config above*" {
-        send "y\r"
-        exp_continue
-    }
-    "completely installed" {
-        puts "\n\nFaceMe SDK installation completed!"
-    }
-    timeout {
-        puts "\n\nTimeout - check installation manually"
-        exit 1
-    }
-    eof
-}
-EXPECT_EOF
-
-echo "Done."
-#+end_src
-
-Run on Jetson:
-#+begin_example
-bash /home/nvidia/projects/F2_Crowd_Scanning/tools/install-faceme.sh
-#+end_example
-
-*** Option B: Manual
-
 Run directly on Jetson terminal:
 #+begin_example
-cd /home/nvidia/projects/F2_Crowd_Scanning/faceme
-./FaceMe_SDK_Jetson_JetPack513_7.0.0.run
+sudo /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMe_SDK_Jetson_JetPack513_7.0.0.run
 #+end_example
 
 Enter these values:
@@ -356,8 +259,6 @@ Enter these values:
   # that disconnects org-babel sessions when head closes the pipe early
   ($VENV_DIR/bin/pip list | head -n 20) 2>/dev/null || true
 #+end_src
-
-#+RESULTS:
 
 * Phase 5: License Activation
 
@@ -466,9 +367,6 @@ YOUR_LICENSE_KEY_HERE
 
   $VENV_DIR/bin/python3 FaceMePythonSample.py showversion
 #+end_src
-
-#+RESULTS:
-: /home/nvidia/projects/F2_Crowd_Scanning/faceme_env/bin/python3: can't open file 'FaceMePythonSample.py': [Errno 2] No such file or directory
 
 Expected output:
 #+begin_example
