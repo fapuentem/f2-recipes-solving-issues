@@ -192,11 +192,18 @@ jtop 4.x.x
 Do NOT run from org-babel - the terminal disconnects during installation.
 #+end_quote
 
+*** Option A: Automhated (run on Jetson terminal)
+
+Save this script on the Jetson and execute it:
+
+#+begin_src bash :tangle ../tools/install-faceme.sh :tangle-mode (identity #o755)
+#!/bin/bash
+set -euo pipefail
 *** Option A: Automated (run on Jetson terminal)
 
 Save this script on the Jetson and execute it:
 
-#+begin_src bash :tangle ~/install-faceme.sh :tangle-mode (identity #o755)
+#+begin_src bash :tangle ../tools/install-faceme.sh :tangle-mode (identity #o755)
 #!/bin/bash
 set -euo pipefail
 
@@ -259,9 +266,75 @@ EXPECT_EOF
 echo "Done."
 #+end_src
 
+#+RESULTS:
+: FaceMe SDK already installed. Skipping.
+
 Run on Jetson:
 #+begin_example
-bash ~/install-faceme.sh
+bash /home/nvidia/projects/F2_Crowd_Scanning/tools/install-faceme.sh
+#+end_example
+FACEME_DIR="/home/nvidia/projects/F2_Crowd_Scanning/faceme"
+
+if [ -d "$FACEME_DIR/FaceMeSDK" ]; then
+    echo "FaceMe SDK already installed. Skipping."
+    exit 0
+fi
+
+echo "Running FaceMe SDK installer (~10 minutes)..."
+
+expect << 'EXPECT_EOF'
+set timeout 1200
+spawn /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMe_SDK_Jetson_JetPack513_7.0.0.run
+
+expect {
+    "password for*" {
+        stty -echo
+        expect_user -re "(.*)\n"
+        stty echo
+        send "$expect_out(1,string)\r"
+        exp_continue
+    }
+    "Installation path*" {
+        send "/home/nvidia/projects/F2_Crowd_Scanning/faceme\r"
+        exp_continue
+    }
+    "*extraction models*" {
+        send "VH11_M\r"
+        exp_continue
+    }
+    "*minimum face*" {
+        send "5\r"
+        exp_continue
+    }
+    "*Demo System*" {
+        send "y\r"
+        exp_continue
+    }
+    "*Sample*code*" {
+        send "y\r"
+        exp_continue
+    }
+    "*config above*" {
+        send "y\r"
+        exp_continue
+    }
+    "completely installed" {
+        puts "\n\nFaceMe SDK installation completed!"
+    }
+    timeout {
+        puts "\n\nTimeout - check installation manually"
+        exit 1
+    }
+    eof
+}
+EXPECT_EOF
+
+echo "Done."
+#+end_src
+
+Run on Jetson:
+#+begin_example
+bash /home/nvidia/projects/F2_Crowd_Scanning/tools/install-faceme.sh
 #+end_example
 
 *** Option B: Manual
