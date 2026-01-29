@@ -125,7 +125,7 @@ jtop 4.x.x
 ** Step 2.3: Verify clone
 
 #+begin_src bash :results output replace :exports both :session f2cs
-  ls -la "$PROJECT_DIR/" | head -n 20
+  (ls -la "$PROJECT_DIR/" | head -n 20) 2>/dev/null || true
 #+end_src
 
 * Phase 3: FaceMe SDK Installation
@@ -189,7 +189,7 @@ Enter these values:
 *** Verify installation
 
 #+begin_src bash :results output replace :exports both :session f2cs
-  ls -la "$FACEME_DIR/FaceMeSDK/" | head -n 10
+  (ls -la "$FACEME_DIR/FaceMeSDK/" | head -n 10) 2>/dev/null || true
 #+end_src
 
 ** Step 3.5: Configure environment variables
@@ -212,7 +212,7 @@ Enter these values:
 ** Step 3.6: Verify FaceMe SDK installation
 
 #+begin_src bash :results output replace :exports both :session f2cs
-  ls -la "$FACEME_DIR/FaceMeSDK/" | head -n 20
+  (ls -la "$FACEME_DIR/FaceMeSDK/" | head -n 20) 2>/dev/null || true
 #+end_src
 
 * Phase 4: Python Environment Setup
@@ -296,7 +296,7 @@ Provide this device identifier to your administrator to generate a license key.
   }
 
   echo "=== Network Interfaces ==="
-  ip link show | grep -E "^[0-9]+:|ether"
+  (ip link show | grep -E "^[0-9]+:|ether") 2>/dev/null || true
 
   echo ""
   echo "=== Device Identifier for License Request ==="
@@ -564,7 +564,7 @@ Quick reference for managing the F2 Crowd Scanner service.
 
 ** Check system logs
 #+begin_src bash :results output replace :exports both
-  dmesg | tail -n 50
+  (dmesg | tail -n 50) 2>/dev/null || true
 #+end_src
 
 ** Verify SDK installation
