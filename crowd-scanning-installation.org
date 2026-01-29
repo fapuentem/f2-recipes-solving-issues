@@ -331,20 +331,26 @@ Provide this device identifier to your administrator to generate a license key.
 *ACTION REQUIRED:* Replace =YOUR_LICENSE_KEY_HERE= with the actual license key before executing.
 #+end_quote
 
-#+NAME: license-key
-#+begin_src text
-YOUR_LICENSE_KEY_HERE
+#+begin_src bash :results output replace :exports both :session f2cs
+  # --- EDIT THIS ---
+  export LICENSE_KEY="YOUR_LICENSE_KEY_HERE"
+  echo "LICENSE_KEY set"
 #+end_src
 
-#+begin_src bash :results output replace :exports both :session f2cs :var LICENSE_KEY=license-key
+#+begin_src bash :results output replace :exports both :session f2cs
   cd "$FACEME_DIR/FaceMeSDK/DemoSystem/Program/"
-
   $VENV_DIR/bin/python3 FaceMePythonSample.py activatelicense "$LICENSE_KEY"
 #+end_src
 
-** Step 5.4: Configure license key environment variable
+** Step 5.4: Configure license key environment variable (Optional)
 
-#+begin_src bash :results output replace :exports both :session f2cs :var LICENSE_KEY=license-key
+#+begin_quote
+*OPTIONAL:* Skip this step if running as a systemd service.
+The service file (Phase 8) already includes the license key.
+This step is only needed for manual testing from the terminal.
+#+end_quote
+
+#+begin_src bash :results output replace :exports both :session f2cs
   set -euo pipefail
 
   if ! grep -q "FACEME_LICENSE_KEY" /home/nvidia/.bashrc; then
