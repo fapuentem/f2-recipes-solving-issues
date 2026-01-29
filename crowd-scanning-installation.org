@@ -172,7 +172,7 @@ Do NOT run from org-babel - the terminal disconnects during installation.
 
 Run directly on Jetson terminal:
 #+begin_example
-sudo /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMe_SDK_Jetson_JetPack513_7.0.0.run
+/home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMe_SDK_Jetson_JetPack513_7.0.0.run
 #+end_example
 
 Enter these values:
