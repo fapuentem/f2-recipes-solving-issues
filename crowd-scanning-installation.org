@@ -192,87 +192,14 @@ jtop 4.x.x
 Do NOT run from org-babel - the terminal disconnects during installation.
 #+end_quote
 
-*** Option A: Automhated (run on Jetson terminal)
-
-Save this script on the Jetson and execute it:
-
-#+begin_src bash :tangle ../tools/install-faceme.sh :tangle-mode (identity #o755)
-#!/bin/bash
-set -euo pipefail
 *** Option A: Automated (run on Jetson terminal)
 
 Save this script on the Jetson and execute it:
 
-#+begin_src bash :tangle ../tools/install-faceme.sh :tangle-mode (identity #o755)
+#+begin_src bash :tangle /home/nvidia/projects/F2_Crowd_Scanning/tools/install-faceme.sh :tangle-mode (identity #o755)
 #!/bin/bash
 set -euo pipefail
 
-FACEME_DIR="/home/nvidia/projects/F2_Crowd_Scanning/faceme"
-
-if [ -d "$FACEME_DIR/FaceMeSDK" ]; then
-    echo "FaceMe SDK already installed. Skipping."
-    exit 0
-fi
-
-echo "Running FaceMe SDK installer (~10 minutes)..."
-
-expect << 'EXPECT_EOF'
-set timeout 1200
-spawn /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMe_SDK_Jetson_JetPack513_7.0.0.run
-
-expect {
-    "password for*" {
-        stty -echo
-        expect_user -re "(.*)\n"
-        stty echo
-        send "$expect_out(1,string)\r"
-        exp_continue
-    }
-    "Installation path*" {
-        send "/home/nvidia/projects/F2_Crowd_Scanning/faceme\r"
-        exp_continue
-    }
-    "*extraction models*" {
-        send "VH11_M\r"
-        exp_continue
-    }
-    "*minimum face*" {
-        send "5\r"
-        exp_continue
-    }
-    "*Demo System*" {
-        send "y\r"
-        exp_continue
-    }
-    "*Sample*code*" {
-        send "y\r"
-        exp_continue
-    }
-    "*config above*" {
-        send "y\r"
-        exp_continue
-    }
-    "completely installed" {
-        puts "\n\nFaceMe SDK installation completed!"
-    }
-    timeout {
-        puts "\n\nTimeout - check installation manually"
-        exit 1
-    }
-    eof
-}
-EXPECT_EOF
-
-echo "Done."
-#+end_src
-
-#+RESULTS:
-: FaceMe SDK already installed. Skipping.
-
-Run on Jetson:
-#+begin_example
-bash /home/nvidia/projects/F2_Crowd_Scanning/tools/install-faceme.sh
-#+end_example
 FACEME_DIR="/home/nvidia/projects/F2_Crowd_Scanning/faceme"
 
 if [ -d "$FACEME_DIR/FaceMeSDK" ]; then
@@ -423,69 +350,69 @@ Enter these values:
   echo "=== FaceMe Package ==="
   $VENV_DIR/bin/pip show FaceMe
 
-  #echo ""
-  #echo "=== Installed Packages ==="
-  #$VENV_DIR/bin/pip list | head -n 20
+  echo ""
+  echo "=== Installed Packages (first 20) ==="
+  # NOTE: Using subshell and error suppression to avoid BrokenPipeError
+  # that disconnects org-babel sessions when head closes the pipe early
+  ($VENV_DIR/bin/pip list | head -n 20) 2>/dev/null || true
 #+end_src
 
 #+RESULTS:
-#+begin_example
-=== Python Version ===
-Python 3.8.10
-
-=== FaceMe Package ===
-Name: FaceMe
-Version: 7.0.0
-Summary: A python layer API to integrate FaceMe SDK into your program for facial recognition features
-Home-page: https://www.cyberlink.com/faceme
-Author: CyberLink FaceMe
-Author-email: FaceMe_US@cyberlink.com
-License: Commercial License
-Location: /home/nvidia/projects/F2_Crowd_Scanning/faceme_env/lib/python3.8/site-packages
-Requires: numpy, opencv-python
-Required-by:
-
-=== Installed Packages ===
-Package            Version
------------------- --------
-aiohappyeyeballs   2.4.4
-aiohttp            3.10.11
-aiosignal          1.3.1
-annotated-types    0.7.0
-async-timeout      5.0.1
-asyncio            4.0.0
-attrs              25.3.0
-certifi            2026.1.4
-charset-normalizer 3.4.4
-exceptiongroup     1.3.1
-FaceMe             7.0.0
-frozenlist         1.5.0
-idna               3.11
-iniconfig          2.1.0
-multidict          6.1.0
-numpy              1.24.4
-opencv-python      4.5.3.56
-packaging          26.0
-ERROR: Pipe to stdout was broken
-Exception ignored in: <_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>
-BrokenPipeError: [Errno 32] Broken pipe
-#+end_example
 
 * Phase 5: License Activation
 
 ** Step 5.1: Get device MAC address
 
-Provide this MAC address to your administrator to generate a license key.
+Provide this device identifier to your administrator to generate a license key.
 
 #+begin_src bash :results output replace :exports both
+  set -euo pipefail
+
+  # Interface priority order for Jetson devices
+  IF_ORDER=("eth1" "eth2" "eth0")
+
+  is_valid_mac() {
+    local mac="$1"
+    local iface="${2:-}"
+
+    # Must match xx:xx:xx:xx:xx:xx format
+    [[ "$mac" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || return 1
+
+    # Normalize to lowercase
+    mac="${mac,,}"
+
+    # Reject invalid/dummy MACs
+    [[ "$mac" != "00:00:00:00:00:00" ]] || return 1
+    [[ "$mac" != "00:00:00:00:00:01" ]] || return 1
+    [[ "$mac" != "ff:ff:ff:ff:ff:ff" ]] || return 1
+
+    # Skip virtual interfaces (no physical device link)
+    if [[ -n "$iface" ]] && [[ ! -e "/sys/class/net/$iface/device" ]]; then
+      return 1
+    fi
+
+    return 0
+  }
+
   echo "=== Network Interfaces ==="
   ip link show | grep -E "^[0-9]+:|ether"
 
   echo ""
-  echo "=== Formatted for License Request ==="
-  cat /sys/class/net/eth0/address 2>/dev/null | tr -d ':' || \
-  cat /sys/class/net/eth1/address 2>/dev/null | tr -d ':' || \
-  cat /sys/class/net/eth2/address 2>/dev/null | tr -d ':'
+  echo "=== Device Identifier for License Request ==="
+
+  for IF in "${IF_ORDER[@]}"; do
+    addr_file="/sys/class/net/$IF/address"
+    [[ -r "$addr_file" ]] || continue
+    mac=$(<"$addr_file")
+    if is_valid_mac "$mac" "$IF"; then
+      mac_no_colon=${mac//:/}
+      printf 'f2_%s\n' "${mac_no_colon,,}"
+      exit 0
+    fi
+  done
+
+  echo "Error: no valid MAC found on ${IF_ORDER[*]}." >&2
+  exit 1
 #+end_src
 
 ** Step 5.2: Copy sample script to demo directory
