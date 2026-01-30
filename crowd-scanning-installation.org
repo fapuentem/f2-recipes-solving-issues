@@ -385,13 +385,7 @@ Expected output:
 
 * Phase 6: Application Configuration
 
-** Step 6.1: View current configuration
-
-#+begin_src bash :results output replace :exports both :session f2cs
-  cat "$PROJECT_DIR/config/config.ini"
-#+end_src
-
-** Step 6.2: Backup current configuration
+** Step 6.1: Backup current configuration
 
 #+begin_src bash :results output replace :exports both :session f2cs
   cp "$PROJECT_DIR/config/config.ini" \
@@ -400,9 +394,17 @@ Expected output:
   ls -la "$PROJECT_DIR/config/"
 #+end_src
 
+** Step 6.2: View current configuration
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  cat "$PROJECT_DIR/config/config.ini"
+#+end_src
+
 ** Step 6.3: Configure cameras
 
-Edit the configuration file to add your camera streams:
+Edit the configuration file to add your camera streams.
+
+Example configuration:
 
 #+begin_example
 [FACEME_SDK]
@@ -448,49 +450,40 @@ Press =ESC= or =Ctrl+C= to stop.
 
 * Phase 8: Production Deployment (systemd)
 
-** Step 8.1: Install email helper script
+** Step 8.1: Create systemd service file
 
-#+begin_src bash :results output replace :exports both :dir /sudo:: :session f2cs
-  sudo install -m755 "$PROJECT_DIR/tools/f2_send_mail.sh" /usr/local/bin/
-#+end_src
+#+begin_quote
+*NOTE:* The license key must be embedded in the service file because systemd services
+do not inherit environment variables from =.bashrc= (which is only sourced for interactive shells).
+Edit the =FACEME_LICENSE_KEY= value below before executing.
+#+end_quote
 
-** Step 8.2: Create systemd service file
-
-#+begin_src bash :results output replace :exports both :dir /sudo:: :session f2cs :var LICENSE_KEY=license-key
+#+begin_src bash :dir /sudo::/etc/systemd/system :results output replace :exports both
   set -euo pipefail
 
-  sudo tee /etc/systemd/system/f2_crowd_scanner.service > /dev/null << SERVICEEOF
-[Unit]
-Description=F2 Crowd Scanning FaceMe Service
-After=network.target
-StartLimitBurst=3
-StartLimitIntervalSec=60
-OnFailure=f2_crowd_scanner-email@%n
+  tee /etc/systemd/system/f2_crowd_scanner.service > /dev/null <<'SERVICEEOF'
+  [Unit]
+  Description=F2 Crowd Scanning FaceMe Service
+  After=network.target
+  StartLimitBurst=3
+  StartLimitIntervalSec=60
 
-[Service]
-Type=simple
-WorkingDirectory=$PROJECT_DIR
-ExecStart=/usr/bin/script -q -c "$VENV_DIR/bin/python $PROJECT_DIR/main.py" /dev/null
-Restart=always
-RestartSec=10
-Environment=FACEME_LICENSE_KEY=$LICENSE_KEY
-StandardOutput=journal
-StandardError=journal
+  [Service]
+  Type=simple
+  WorkingDirectory=/home/nvidia/projects/F2_Crowd_Scanning
+  ExecStart=/home/nvidia/projects/F2_Crowd_Scanning/faceme_env/bin/python /home/nvidia/projects/F2_Crowd_Scanning/main.py
+  Restart=always
+  RestartSec=10
+  Environment=FACEME_LICENSE_KEY=
+  StandardOutput=journal
+  StandardError=journal
 
-[Install]
-WantedBy=multi-user.target
-SERVICEEOF
-
-  echo "Service file created."
+  [Install]
+  WantedBy=multi-user.target
+  SERVICEEOF
 #+end_src
 
-** Step 8.3: Install email notification service
-
-#+begin_src bash :results output replace :exports both :dir /sudo:: :session f2cs
-  sudo cp "$PROJECT_DIR/tools/f2_crowd_scanner-email@.service" /etc/systemd/system/
-#+end_src
-
-** Step 8.4: Enable and start service
+** Step 8.2: Enable and start service
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl daemon-reload
@@ -498,7 +491,7 @@ SERVICEEOF
   sudo systemctl start f2_crowd_scanner.service
 #+end_src
 
-** Step 8.5: Verify service status
+** Step 8.3: Verify service status
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl status f2_crowd_scanner.service --no-pager -l
