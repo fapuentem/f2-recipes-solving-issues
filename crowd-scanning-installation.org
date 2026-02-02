@@ -62,28 +62,58 @@ All code blocks are designed to be idempotent where possible.
 
 * Phase 1: System Preparation
 
-** Step 1.1: Update system and install dependencies
+** Step 1.1: Update system and install core packages
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
-  set -euo pipefail
+  sudo apt-get update && sudo apt-get upgrade -y
 
-  sudo apt update && sudo apt upgrade -y
-
-  sudo apt install -y \
-      git wget curl unzip tar \
-      build-essential cmake \
-      libssl-dev libffi-dev expect \
-      python3.8 python3-pip python3.8-venv \
-      sendemail rsync bsdutils
+  sudo apt-get install -y \
+      git build-essential cmake \
+      python3.8 python3.8-dev python3.8-venv python3-pip
 #+end_src
 
-** Step 1.2: Install Jetson Stats (jtop)
+** Step 1.2: Install system utilities and hardware tools
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo apt-get install -y \
+      apt-utils wget curl unzip tar zip \
+      tree htop nano \
+      libssl-dev libffi-dev expect \
+      sendemail rsync bsdutils \
+      i2c-tools v4l-utils
+#+end_src
+
+** Step 1.3: Install CUDA/cuDNN/TensorRT (JetPack 5.x)
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo apt-get install -y \
+      nvidia-cuda \
+      libcudnn8 libcudnn8-dev \
+      tensorrt libnvinfer8 libnvinfer-dev python3-libnvinfer
+#+end_src
+
+** Step 1.4: Configure environment and install Jetson Stats
+
+#+begin_src bash :results output replace :exports both
+  cat >> ~/.bashrc <<'EOF'
+
+### User PATH
+export PATH="$HOME/.local/bin:$PATH"
+
+### CUDA/TensorRT
+export PATH="/usr/local/cuda/bin:$PATH"
+export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
+export PATH="/usr/src/tensorrt/bin:$PATH"
+EOF
+
+  echo "Environment paths added to .bashrc"
+#+end_src
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   sudo pip3 install -U jetson-stats
 #+end_src
 
-** Step 1.3: Verify JetPack installation
+** Step 1.5: Verify installation
 
 #+begin_src bash :results output replace :exports both
   jtop --version || echo "jtop not found - reboot may be required"
@@ -342,31 +372,7 @@ Provide this device identifier to your administrator to generate a license key.
   $VENV_DIR/bin/python3 FaceMePythonSample.py activatelicense "$LICENSE_KEY"
 #+end_src
 
-** Step 5.4: Configure license key environment variable (Optional)
-
-#+begin_quote
-*OPTIONAL:* Skip this step if running as a systemd service.
-The service file (Phase 8) already includes the license key.
-This step is only needed for manual testing from the terminal.
-#+end_quote
-
-#+begin_src bash :results output replace :exports both :session f2cs
-  set -euo pipefail
-
-  if ! grep -q "FACEME_LICENSE_KEY" /home/nvidia/.bashrc; then
-      echo "export FACEME_LICENSE_KEY=\"$LICENSE_KEY\"" >> /home/nvidia/.bashrc
-      echo "FACEME_LICENSE_KEY added to .bashrc"
-  else
-      sed -i "s/export FACEME_LICENSE_KEY=.*/export FACEME_LICENSE_KEY=\"$LICENSE_KEY\"/" /home/nvidia/.bashrc
-      echo "FACEME_LICENSE_KEY updated in .bashrc"
-  fi
-
-  # Export for current session
-  export FACEME_LICENSE_KEY="$LICENSE_KEY"
-  echo "FACEME_LICENSE_KEY configured"
-#+end_src
-
-** Step 5.5: Verify SDK activation
+** Step 5.4: Verify SDK activation
 
 #+begin_src bash :results output replace :exports both :session f2cs
   cd "$FACEME_DIR/FaceMeSDK/DemoSystem/Program/"
@@ -428,9 +434,22 @@ NAME = Camera-1
 CAMERA_ID = 1
 #+end_example
 
-* Phase 7: Quick Test
+* Phase 7: Quick Test (Development Only)
 
-** Step 7.1: Run application manually (smoke test)
+#+begin_quote
+*WARNING:* This phase is for development and testing purposes only.
+Skip this phase if deploying for production - proceed directly to Phase 8.
+#+end_quote
+
+** Step 7.1: Configure license key for terminal testing
+
+#+begin_src bash :results output replace :exports both :session f2cs
+  echo "export FACEME_LICENSE_KEY=\"$LICENSE_KEY\"" >> /home/nvidia/.bashrc
+  export FACEME_LICENSE_KEY="$LICENSE_KEY"
+  echo "FACEME_LICENSE_KEY configured for terminal testing"
+#+end_src
+
+** Step 7.2: Run application manually (smoke test)
 
 #+begin_src bash :results output replace :exports both :session f2cs
   cd "$PROJECT_DIR"
@@ -440,7 +459,7 @@ CAMERA_ID = 1
 
 Press =ESC= or =Ctrl+C= to stop.
 
-** Step 7.2: Run unit tests
+** Step 7.3: Run unit tests
 
 #+begin_src bash :results output replace :exports both :session f2cs
   cd "$PROJECT_DIR"
@@ -453,15 +472,14 @@ Press =ESC= or =Ctrl+C= to stop.
 ** Step 8.1: Create systemd service file
 
 #+begin_quote
-*NOTE:* The license key must be embedded in the service file because systemd services
-do not inherit environment variables from =.bashrc= (which is only sourced for interactive shells).
-Edit the =FACEME_LICENSE_KEY= value below before executing.
+*NOTE:* The license key is automatically embedded from =$LICENSE_KEY= (set in Step 5.3).
+Systemd services do not inherit environment variables from =.bashrc=.
 #+end_quote
 
-#+begin_src bash :dir /sudo::/etc/systemd/system :results output replace :exports both
+#+begin_src bash :results output replace :exports both :session f2cs
   set -euo pipefail
 
-  tee /etc/systemd/system/f2_crowd_scanner.service > /dev/null <<'SERVICEEOF'
+  cat > "$PROJECT_DIR/f2_crowd_scanner.service" <<SERVICEEOF
   [Unit]
   Description=F2 Crowd Scanning FaceMe Service
   After=network.target
@@ -471,16 +489,29 @@ Edit the =FACEME_LICENSE_KEY= value below before executing.
   [Service]
   Type=simple
   WorkingDirectory=/home/nvidia/projects/F2_Crowd_Scanning
-  ExecStart=/home/nvidia/projects/F2_Crowd_Scanning/faceme_env/bin/python /home/nvidia/projects/F2_Crowd_Scanning/main.py
+  ExecStart=/usr/bin/script -q -c "/home/nvidia/projects/F2_Crowd_Scanning/faceme_env/bin/python /home/nvidia/projects/F2_Crowd_Scanning/main.py" /dev/null
   Restart=always
   RestartSec=10
-  Environment=FACEME_LICENSE_KEY=
+  Environment=FACEME_LICENSE_KEY=$LICENSE_KEY
   StandardOutput=journal
   StandardError=journal
 
   [Install]
   WantedBy=multi-user.target
   SERVICEEOF
+
+  echo "Service file created at: $PROJECT_DIR/f2_crowd_scanner.service"
+#+end_src
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  set -euo pipefail
+
+  cp /home/nvidia/projects/F2_Crowd_Scanning/f2_crowd_scanner.service \
+     /etc/systemd/system/f2_crowd_scanner.service
+
+  rm /home/nvidia/projects/F2_Crowd_Scanning/f2_crowd_scanner.service
+
+  echo "Service file installed and temp file removed"
 #+end_src
 
 ** Step 8.2: Enable and start service
@@ -503,7 +534,7 @@ Edit the =FACEME_LICENSE_KEY= value below before executing.
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   # For user sessions
-  mkdir -p /home/nvidia/.local/share/CyberLink/FaceMeSDK/Developer/
+  # mkdir -p /home/nvidia/.local/share/CyberLink/FaceMeSDK/Developer/
 
   # For root/systemd services
   sudo mkdir -p /root/.local/share/CyberLink/FaceMeSDK/Developer/
@@ -513,7 +544,7 @@ Edit the =FACEME_LICENSE_KEY= value below before executing.
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   # User environment
-  echo "Severity=0" > /home/nvidia/.local/share/CyberLink/FaceMeSDK/Developer/Logger.txt
+  # echo "Severity=0" > /home/nvidia/.local/share/CyberLink/FaceMeSDK/Developer/Logger.txt
 
   # Root environment (for systemd)
   echo "Severity=0" | sudo tee /root/.local/share/CyberLink/FaceMeSDK/Developer/Logger.txt
