@@ -1,0 +1,530 @@
+#+TITLE: Mender Client and Workstation Setup Recipe (Jetson Orin NX)
+#+AUTHOR: Eduardo Torres Urbano
+#+PROPERTY: header-args:bash :results output replace :exports both
+#+OPTIONS: toc:2 num:nil
+#+EXCLUDE_TAGS: noexport
+#+STARTUP: showall
+
+* Code :noexport:
+#+NAME: startup
+#+BEGIN_SRC elisp :results none
+  (load-theme 'modus-vivendi)
+  (setf fill-column 100)
+    (org-babel-do-load-languages
+     'org-babel-load-languages
+     '((shell . t)
+       (emacs-lisp . t)))
+#+END_SRC
+
+* Context
+
+This document provides a step-by-step guide for setting up *Mender OTA* (Over-The-Air) updates on NVIDIA Jetson devices and a companion workstation for artifact creation.
+
+#+begin_quote
+The recipe uses single-rootfs mode (no A/B partitions) suitable for JetPack installations.
+All code blocks are designed to be idempotent where possible.
+#+end_quote
+
+** Target environment
+
+| Component   | Target                                   |
+|-------------+------------------------------------------|
+| Device      | Jetson (JetPack 5.1, Ubuntu 20.04, arm64)|
+| Workstation | Ubuntu 22.04 (WSL on Windows, amd64)     |
+| Backend     | Mender Cloud (hosted.mender.io)          |
+| Mode        | single-rootfs (no A/B)                   |
+
+** System requirements
+
+- NVIDIA Jetson Orin NX with JetPack 5.1+
+- Ubuntu 22.04 workstation (or WSL) for artifact creation
+- Internet connection on both systems
+- Mender Cloud account with Tenant Token
+
+* Variables (edit these)
+
+#+begin_quote
+These variables are for *workstation* artifact creation (Phase 2-4).
+Jetson-specific values are set inline in Phase 1 blocks.
+#+end_quote
+
+#+name: vars
+#+begin_src bash :results output replace :exports both :session mender
+  # --- EDIT THESE ---
+  export DEVICE_TYPE="jetson"
+  export DEVICE_GROUP="jetson-test"
+
+  # Workstation paths
+  export MENDER_TEST_DIR="$HOME/mender-test"
+
+  echo "DEVICE_TYPE=$DEVICE_TYPE"
+  echo "DEVICE_GROUP=$DEVICE_GROUP"
+  echo "MENDER_TEST_DIR=$MENDER_TEST_DIR"
+#+end_src
+
+* Phase 1: Jetson Device Setup (Ubuntu 20.04)
+
+** Step 1.1: Install Mender Client
+
+Direct =.deb= downloads for Mender Client 3.x are no longer publicly accessible.
+The only supported method on Ubuntu 20.04 is the official installer script.
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  set -euo pipefail
+
+  curl -fLsS https://get.mender.io -o get-mender.sh
+  sudo bash get-mender.sh mender-client
+#+end_src
+
+Verify installation:
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  (dpkg -l | grep mender) 2>/dev/null || true
+#+end_src
+
+Expected output:
+#+begin_example
+ii  mender-client  3.5.x  arm64  Mender client for OTA software updates
+#+end_example
+
+** Step 1.2: Stop client before configuration
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  sudo systemctl stop mender-client
+#+end_src
+
+** Step 1.3: Configure Mender Client for Mender Cloud
+
+#+begin_quote
+*ACTION REQUIRED:* Replace =<YOUR_TENANT_TOKEN>= with your actual Mender Cloud tenant token.
+#+end_quote
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  set -euo pipefail
+
+  # --- EDIT THIS ---
+  TENANT_TOKEN="<YOUR_TENANT_TOKEN>"
+
+  sudo tee /etc/mender/mender.conf > /dev/null <<CONFEOF
+{
+  "ServerURL": "https://hosted.mender.io",
+  "TenantToken": "$TENANT_TOKEN",
+  "InventoryPollIntervalSeconds": 300,
+  "UpdatePollIntervalSeconds": 1800,
+  "RetryPollIntervalSeconds": 300
+}
+CONFEOF
+
+  echo "mender.conf written"
+#+end_src
+
+Validate JSON syntax:
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  python3 -m json.tool /etc/mender/mender.conf || echo "Invalid JSON or file not found"
+#+end_src
+
+** Step 1.4: Configure single-rootfs mode
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  set -euo pipefail
+
+  sudo mkdir -p /etc/mender/mender.conf.d
+
+  sudo tee /etc/mender/mender.conf.d/single-rootfs.conf > /dev/null <<'CONFEOF'
+{
+  "RootfsPartA": "",
+  "RootfsPartB": "",
+  "BootUtilitiesSetActive": "",
+  "BootUtilitiesGetNextActive": ""
+}
+CONFEOF
+
+  echo "single-rootfs.conf written"
+#+end_src
+
+Validate:
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  python3 -m json.tool /etc/mender/mender.conf.d/single-rootfs.conf || echo "Invalid JSON or file not found"
+#+end_src
+
+** Step 1.5: Ensure device identity exists
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  set -euo pipefail
+
+  DEVICE_TYPE="jetson"
+
+  if [ -f /var/lib/mender/device_type ]; then
+    echo "device_type exists:"
+    cat /var/lib/mender/device_type
+  else
+    echo "device_type=$DEVICE_TYPE" | sudo tee /var/lib/mender/device_type
+    echo "Created device_type file"
+  fi
+#+end_src
+
+** Step 1.6: Start the client
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  sudo systemctl reset-failed mender-client
+  sudo systemctl start mender-client
+  (sudo systemctl status mender-client --no-pager -l | head -20) 2>/dev/null || true
+#+end_src
+
+Follow logs (run interactively):
+
+#+begin_src bash :eval never :dir /ssh:jetson:~
+  journalctl -u mender-client -u mender-authd -u mender-updated -f
+#+end_src
+
+** Step 1.7: Accept device in Mender Cloud
+
+#+begin_quote
+*MANUAL STEP:* Complete in Mender Cloud UI.
+#+end_quote
+
+1. Navigate to *Devices* → *Pending*
+2. Accept the device
+3. Assign to static group: =jetson-test=
+
+** Step 1.8: Freeze client version (recommended)
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  sudo apt-mark hold mender-client
+  echo "mender-client version locked"
+#+end_src
+
+* Phase 2: Workstation Setup (Ubuntu 22.04 on WSL)
+
+#+begin_quote
+Required to build and deploy artifacts. Does *NOT* run on the Jetson.
+#+end_quote
+
+** Step 2.1: Verify workstation OS
+
+#+begin_src bash :results output replace :exports both
+  cat /etc/os-release | grep -E "^(NAME|VERSION_ID)"
+#+end_src
+
+Expected:
+#+begin_example
+NAME="Ubuntu"
+VERSION_ID="22.04"
+#+end_example
+
+** Step 2.2: Add Mender workstation-tools repository
+
+Remove any incorrect repo first:
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo rm -f /etc/apt/sources.list.d/mender.list
+  echo "Removed old mender.list (if any)"
+#+end_src
+
+Add GPG key:
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  curl -fsSL https://downloads.mender.io/repos/debian/gpg \
+    | sudo tee /etc/apt/trusted.gpg.d/mender.asc > /dev/null
+  echo "GPG key added"
+#+end_src
+
+Add Ubuntu Jammy workstation repo:
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  echo "deb [arch=amd64] https://downloads.mender.io/repos/workstation-tools ubuntu/jammy/stable main" \
+    | sudo tee /etc/apt/sources.list.d/mender.list
+#+end_src
+
+Update package lists:
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  (sudo apt update 2>&1 | tail -5) || true
+#+end_src
+
+** Step 2.3: Install workstation tools
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo apt install -y mender-artifact mender-cli
+#+end_src
+
+Verify:
+
+#+begin_src bash :results output replace :exports both
+  mender-artifact --version || echo "mender-artifact not installed"
+  mender-cli --version || echo "mender-cli not installed"
+#+end_src
+
+* Phase 3: Test Deployment – File Update
+
+This test validates the full OTA pipeline end-to-end using a minimal, non-invasive payload.
+
+** Step 3.1: Create test file on workstation
+
+#+begin_src bash :results output replace :exports both :session mender
+  set -euo pipefail
+
+  mkdir -p "$MENDER_TEST_DIR/files"
+  echo "hello from mender $(date)" > "$MENDER_TEST_DIR/files/test.txt"
+
+  echo "Created test file:"
+  cat "$MENDER_TEST_DIR/files/test.txt"
+#+end_src
+
+** Step 3.2: Create file-based Mender artifact
+
+#+begin_src bash :results output replace :exports both :session mender
+  set -euo pipefail
+
+  mender-artifact write module-image \
+    -T "$DEVICE_TYPE" \
+    -n test-file-deploy \
+    -t file \
+    -o "$MENDER_TEST_DIR/test-file-deploy.mender" \
+    -f "$MENDER_TEST_DIR/files/test.txt"
+
+  (ls -la "$MENDER_TEST_DIR"/*.mender) 2>/dev/null || true
+#+end_src
+
+** Step 3.3: Upload artifact to Mender Cloud
+
+Authenticate (interactive, run manually):
+
+#+begin_src bash :eval never
+  mender-cli login
+#+end_src
+
+Upload:
+
+#+begin_src bash :results output replace :exports both :session mender
+  mender-cli artifacts upload "$MENDER_TEST_DIR/test-file-deploy.mender"
+#+end_src
+
+Verify:
+
+#+begin_src bash :results output replace :exports both
+  (mender-cli artifacts list | head -10) 2>/dev/null || true
+#+end_src
+
+** Step 3.4: Deploy artifact
+
+#+begin_quote
+*MANUAL STEP:* Complete in Mender Cloud UI.
+#+end_quote
+
+1. Navigate to *Releases*
+2. Create new deployment
+3. Select artifact: =test-file-deploy=
+4. Target group: =jetson-test=
+5. Start deployment
+
+** Step 3.5: Verify deployment on Jetson
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  cat /data/mender/file/test.txt 2>/dev/null || echo "File not found - deployment may still be in progress"
+#+end_src
+
+Expected: The timestamped message from Step 3.1.
+
+* Phase 4: Test Deployment – Script Update
+
+This test validates script-based OTA provisioning with package installation.
+
+** Step 4.1: Purpose
+
+Verify that Mender can:
+- Execute scripts as root on the device
+- Perform non-interactive package installation
+- Modify user environment files
+- Complete without reboot or A/B partitions
+
+** Step 4.2: Prepare installation script
+
+#+begin_src bash :results output replace :exports both :session mender
+  set -euo pipefail
+
+  mkdir -p "$MENDER_TEST_DIR/scripts"
+
+  cat > "$MENDER_TEST_DIR/scripts/install-packages.sh" <<'SCRIPTEOF'
+#!/bin/bash
+set -e
+export DEBIAN_FRONTEND=noninteractive
+
+echo "[INFO] Starting package installation..."
+
+# Add your package installation commands here
+# Example:
+# sudo apt-get update
+# sudo apt-get install -y <package-name>
+
+echo "[INFO] Package installation complete."
+SCRIPTEOF
+
+  chmod +x "$MENDER_TEST_DIR/scripts/install-packages.sh"
+  echo "Script created:"
+  (ls -la "$MENDER_TEST_DIR/scripts/") 2>/dev/null || true
+#+end_src
+
+** Step 4.3: Create script-based Mender artifact
+
+#+begin_src bash :results output replace :exports both :session mender
+  set -euo pipefail
+
+  mender-artifact write module-image \
+    -T "$DEVICE_TYPE" \
+    -n install-packages-v1 \
+    -t script \
+    -o "$MENDER_TEST_DIR/install-packages-v1.mender" \
+    -f "$MENDER_TEST_DIR/scripts/install-packages.sh"
+
+  (ls -la "$MENDER_TEST_DIR"/*.mender) 2>/dev/null || true
+#+end_src
+
+** Step 4.4: Upload artifact to Mender Cloud
+
+#+begin_src bash :results output replace :exports both :session mender
+  mender-cli artifacts upload "$MENDER_TEST_DIR/install-packages-v1.mender"
+#+end_src
+
+Verify:
+
+#+begin_src bash :results output replace :exports both
+  (mender-cli artifacts list | head -10) 2>/dev/null || true
+#+end_src
+
+** Step 4.5: Deploy script
+
+#+begin_quote
+*MANUAL STEP:* Complete in Mender Cloud UI.
+#+end_quote
+
+1. Navigate to *Releases*
+2. Create new deployment
+3. Select artifact: =install-packages-v1=
+4. Target group: =jetson-test=
+5. Start deployment
+
+** Step 4.6: Monitor execution on device
+
+#+begin_src bash :eval never :dir /ssh:jetson:~
+  journalctl -u mender-client -f
+#+end_src
+
+Expected behavior:
+- Artifact download
+- Script execution
+- Package installation (if configured)
+- Deployment completes successfully
+- Client returns to Idle state
+
+** Step 4.7: Verify results
+
+Confirm installed packages (example):
+
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  (dpkg -l | grep -E "cuda|nvinfer" | head -10) 2>/dev/null || true
+#+end_src
+
+** Step 4.8: Notes on script-based deployments
+
+- Scripts always run as root
+- No interactive prompts allowed
+- Package installs must use =-y=
+- Scripts should be idempotent (safe to run multiple times)
+- Failures cause deployment to be marked as failed
+
+* Service Management Commands
+
+Quick reference for managing Mender client on Jetson.
+
+** Start client
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  sudo systemctl start mender-client
+  echo "mender-client started"
+#+end_src
+
+** Stop client
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  sudo systemctl stop mender-client
+  echo "mender-client stopped"
+#+end_src
+
+** Restart client
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  sudo systemctl restart mender-client
+  echo "mender-client restarted"
+#+end_src
+
+** View client status
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  sudo systemctl status mender-client --no-pager -l || true
+#+end_src
+
+** View recent logs
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  (sudo journalctl -u mender-client -n 50 --no-pager) 2>/dev/null || true
+#+end_src
+
+** Follow logs in real-time
+#+begin_src bash :eval never :dir /ssh:jetson:~
+  sudo journalctl -u mender-client -f
+#+end_src
+
+* Troubleshooting
+
+** Check device authorization status
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  cat /var/lib/mender/device_type 2>/dev/null || echo "device_type not found"
+  (ls -la /var/lib/mender/) 2>/dev/null || true
+#+end_src
+
+** Verify configuration files
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  cat /etc/mender/mender.conf 2>/dev/null || echo "mender.conf not found"
+  cat /etc/mender/mender.conf.d/single-rootfs.conf 2>/dev/null || echo "No single-rootfs.conf"
+#+end_src
+
+** Check network connectivity to Mender Cloud
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  (curl -I https://hosted.mender.io 2>&1 | head -5) 2>/dev/null || echo "Connection failed"
+#+end_src
+
+** Reset client state (use with caution)
+#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+  sudo systemctl stop mender-client
+  sudo rm -f /var/lib/mender/mender-store
+  sudo systemctl start mender-client
+  echo "Client state reset - device will need re-authorization"
+#+end_src
+
+* Quick decision tree
+
+- Device not appearing in Pending → check network, =journalctl -u mender-client=
+- Authorization fails → verify TenantToken in mender.conf
+- Deployment stuck → check =journalctl -u mender-client -f= on device
+- Artifact upload fails → run =mender-cli login= first
+- Script deployment fails → ensure script is executable and non-interactive
+
+* Key takeaway
+
+#+begin_quote
+This recipe provides an end-to-end setup for Mender OTA updates on Jetson devices.
+Run each phase sequentially, and verify expected outputs before proceeding.
+For issues, check the Troubleshooting section and service logs.
+#+end_quote
+
+* References
+
+- [[https://docs.mender.io/][Mender Documentation]]
+- [[https://docs.mender.io/client-installation/install-with-debian-package][Mender Client Installation Guide]]
+- [[https://hub.mender.io/t/jetson/5843][Mender Hub: Jetson Integration]]
+
+# Local Variables:
+# org-confirm-babel-evaluate: (lambda (lang body) (not (string= lang "elisp")))
+# eval: (progn
+#         (when (fboundp 'org-babel-goto-named-src-block)
+#           (org-babel-goto-named-src-block "startup")
+#           (org-babel-execute-src-block)))
+# End:
