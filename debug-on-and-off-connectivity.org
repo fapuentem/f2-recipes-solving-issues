@@ -144,7 +144,7 @@ Still, disabling Wi-Fi can reduce log noise and remove one variable.
 Run monitors during a "bad" window.
 
 ** Monitor route changes in real time
-#+BEGIN_SRC shell :dir /sudo::
+#+BEGIN_SRC shell
   sudo ip -ts monitor route | tee -a /var/log/route-flap.log
 #+END_SRC
 
@@ -154,12 +154,12 @@ What to look for:
 - metric changes over time
 
 ** Monitor kernel messages (link down/up, driver resets)
-#+BEGIN_SRC shell :dir /sudo::
+#+BEGIN_SRC shell
   sudo journalctl -f -k | tee -a /var/log/kernel-follow.log
 #+END_SRC
 
 ** Monitor relevant services
-#+BEGIN_SRC shell :dir /sudo::
+#+BEGIN_SRC shell
   sudo journalctl -f -u NetworkManager -u dhcpcd -u ModemManager -u quectel-cm | tee -a /var/log/net-services-follow.log
 #+END_SRC
 
@@ -167,13 +167,13 @@ What to look for:
 This installs a small logger that continuously records link/address/route changes to a rotating log file.
 
 ** Create log directory
-#+begin_src shell
+#+begin_src shell :dir /sudo::
   sudo mkdir -p /var/log/net-flap
   sudo chmod 0755 /var/log/net-flap
 #+end_src
 
 ** Create the logger script
-#+begin_src shell
+#+begin_src shell :dir /sudo::
   sudo tee /usr/local/sbin/net-flap-recorder.sh >/dev/null <<'EOF'
   #!/usr/bin/env bash
   set -euo pipefail
@@ -206,7 +206,7 @@ This installs a small logger that continuously records link/address/route change
 #+end_src
 
 ** Create a systemd unit
-#+begin_src shell
+#+begin_src shell :dir /sudo::
   sudo tee /etc/systemd/system/net-flap-recorder.service >/dev/null <<'EOF'
   [Unit]
   Description=Net flap recorder (ip monitor link/addr/route)
@@ -232,7 +232,7 @@ This installs a small logger that continuously records link/address/route change
 #+end_src
 
 ** (Optional) Add logrotate (keeps logs bounded)
-#+begin_src shell
+#+begin_src shell :dir /sudo::
   sudo tee /etc/logrotate.d/net-flap-recorder >/dev/null <<'EOF'
   /var/log/net-flap/*.log {
     rotate 14
