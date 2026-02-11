@@ -1,0 +1,371 @@
+#+TITLE: Debug on-and-off connectivity
+#+author: Fabricio Puente M.
+#+date: <2026-01-20 Tue>
+#+options: toc:2 num:t
+#+property: header-args:shell :results output replace :exports both
+
+* Code :noexport:
+#+NAME: startup
+#+BEGIN_SRC elisp :results none
+  (load-theme 'modus-vivendi)
+  (setf fill-column 100)
+    (org-babel-do-load-languages
+     'org-babel-load-languages
+     '((shell . t)))
+#+END_SRC
+
+* Goal
+Debug intermittent ("on-and-off") network connectivity on Jetson Orin
+NX devices deployed behind Meraki switches, with Quectel 5G as backup
+uplink.  Primary suspicion: *short routing disruptions* caused by
+*multiple network managers* fighting over DHCP/routes/DNS and/or WWAN
+control.
+
+* Symptoms observed
+- Reverse SSH sessions drop intermittently.
+- Meraki may report the client as temporarily offline.
+- Kernel logs show Intel Wi-Fi (iwlwifi) microcode crashes (may be
+  noise if Wi-Fi not used).
+- Device shows both wired (eth1) and cellular (wwan0) configured
+  concurrently.
+
+* Quick networking mental model (why these commands)
+- *ip link*  -> Layer 2 (interface state, carrier)
+- *ip addr*  -> Layer 3 (IP addressing)
+- *ip route* -> forwarding decisions (default route, metrics)
+- *resolvectl* -> DNS sources (per-link DNS and default route)
+- *systemctl* -> who is controlling networking (the real root cause very often)
+
+* Baseline collection
+Run these once when you can reach the device. Save output in ticket or logs.
+
+** Kernel + uptime
+#+BEGIN_SRC shell
+  uname -a
+  uptime
+#+END_SRC
+
+** Interfaces: link state (carrier) and addresses
+#+BEGIN_SRC shell
+  ip -br link
+  ip -br addr
+#+END_SRC
+
+Interpretation notes:
+- *LOWER_UP* means physical carrier is present.
+- *NO-CARRIER* means unplugged/unassociated/no physical signal.
+- On deployed units, typically *eth1* is the wired LAN and should be *UP + LOWER_UP*.
+
+** Routing table + policy rules
+#+BEGIN_SRC shell
+  ip route show table main
+  ip rule show
+#+END_SRC
+
+Interpretation notes:
+- Default routes determine primary/backup path.
+- *metric* decides preference: lower metric wins.
+- Multiple default routes are OK if metrics are well-separated (wired low, cellular high).
+- Unexpected behavior occurs if different daemons keep adding/removing these routes.
+
+** DNS sources
+#+BEGIN_SRC shell
+  resolvectl status 2>/dev/null || cat /etc/resolv.conf
+#+END_SRC
+
+Interpretation notes:
+- If wired drops and system fails over to WWAN, DNS may break unless WWAN provides DNS and resolved accepts it.
+- Reverse SSH failures may look like "network down" when DNS is the only thing broken.
+
+** NetworkManager view
+#+BEGIN_SRC shell
+  nmcli general status 2>/dev/null || true
+#+END_SRC
+
+Interpretation notes:
+- NM can show radios enabled even if wlan0 is not connected (normal).
+- Connectivity=full does not prove routes are stable under churn.
+
+** Identify competing networking services ("too many masters")
+#+BEGIN_SRC shell
+  systemctl --type=service --state=running | egrep -i 'NetworkManager|systemd-networkd|dhcpcd|ModemManager|quectel|wwan' || true
+#+END_SRC
+
+Interpretation notes:
+- You generally want *ONE* owner for:
+  - DHCP/IP assignment on ethernet
+  - routes/metrics
+  - DNS updates
+  - modem lifecycle (WWAN)
+- Multiple active managers can fight and create short outages.
+
+* Confirm default route ownership (high-signal check)
+This reveals *who installed* each default route.
+
+#+BEGIN_SRC shell
+  ip -details route show default
+#+END_SRC
+
+Interpretation notes:
+- Example fields:
+  - *proto dhcp* -> installed by a DHCP client (often NetworkManager or dhcpcd)
+  - *proto boot* -> installed by a boot-time script or a connection manager (often quectel-cm or custom scripts)
+- If wired default is *proto dhcp* and WWAN default is *proto boot*, then two different control planes are touching routing.
+
+* Hypothesis: why "on-and-off" happens even when routes look OK right now
+At any given moment the routing table may look sane, but instability appears if multiple daemons modify routes during:
+- DHCP renewals on eth1 (route removed/re-added)
+- connectivity checks (route metrics modified)
+- WWAN reconnect cycles (wwan0 down/up, default route replaced)
+- DNS rewrites tied to link changes
+
+** Typical flap sequence (common in the field)
+1. eth1 DHCP renew triggers a short reconfigure
+2. NetworkManager adjusts route/metrics during connectivity checks
+3. quectel-cm (or ModemManager) toggles wwan0 state
+4. Default route flips momentarily
+5. Reverse SSH TCP sessions die
+6. Route flips back => appears as "on-and-off"
+
+Meraki can report client offline during those seconds.
+
+* Note on iwlwifi (Wi-Fi) crashes
+Kernel logs show repeated iwlwifi microcode errors and hardware restarts.
+However, if:
+- wlan0 is *NO-CARRIER* (not associated),
+- there is no default route via wlan0,
+- DNS is not coming from wlan0,
+
+then Wi-Fi is likely *noise* (not root cause for reverse SSH drops).
+
+Still, disabling Wi-Fi can reduce log noise and remove one variable.
+
+* Evidence capture (to prove route flapping)
+Run monitors during a "bad" window.
+
+** Monitor route changes in real time
+#+BEGIN_SRC shell
+  sudo ip -ts monitor route | tee -a /var/log/route-flap.log
+#+END_SRC
+
+What to look for:
+- "Deleted default via ..." and "Added default via ..."
+- default route switching between eth1 and wwan0
+- metric changes over time
+
+** Monitor kernel messages (link down/up, driver resets)
+#+BEGIN_SRC shell
+  sudo journalctl -f -k | tee -a /var/log/kernel-follow.log
+#+END_SRC
+
+** Monitor relevant services
+#+BEGIN_SRC shell
+  sudo journalctl -f -u NetworkManager -u dhcpcd -u ModemManager -u quectel-cm | tee -a /var/log/net-services-follow.log
+#+END_SRC
+
+* Persistent logging via systemd (recommended)
+This installs a small logger that continuously records link/address/route changes to a rotating log file.
+
+** Create log directory
+#+begin_src shell :dir /sudo::
+  sudo mkdir -p /var/log/net-flap
+  sudo chmod 0755 /var/log/net-flap
+#+end_src
+
+** Create the logger script
+#+begin_src shell :dir /sudo::
+  sudo tee /usr/local/sbin/net-flap-recorder.sh >/dev/null <<'EOF'
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  LOG_DIR="/var/log/net-flap"
+  mkdir -p "$LOG_DIR"
+
+  # Log start marker + baseline snapshot
+  {
+    echo "=== net-flap-recorder START $(date -Is) ==="
+    echo "--- baseline: ip -br link ---"
+    ip -br link || true
+    echo "--- baseline: ip -br addr ---"
+    ip -br addr || true
+    echo "--- baseline: ip route ---"
+    ip route || true
+    echo "--- baseline: ip rule ---"
+    ip rule || true
+    echo "--- baseline: resolvectl ---"
+    resolvectl status 2>/dev/null || cat /etc/resolv.conf || true
+    echo
+  } >> "$LOG_DIR/recorder.log" 2>&1
+
+  # Stream kernel netlink updates (link/addr/route) with timestamps
+  exec ip -ts monitor link addr route \
+    | stdbuf -oL tee -a "$LOG_DIR/ip-monitor.log"
+  EOF
+
+  sudo chmod +x /usr/local/sbin/net-flap-recorder.sh
+#+end_src
+
+** Create a systemd unit
+#+begin_src shell :dir /sudo::
+  sudo tee /etc/systemd/system/net-flap-recorder.service >/dev/null <<'EOF'
+  [Unit]
+  Description=Net flap recorder (ip monitor link/addr/route)
+  After=network-online.target
+  Wants=network-online.target
+
+  [Service]
+  Type=simple
+  ExecStart=/usr/local/sbin/net-flap-recorder.sh
+  Restart=always
+  RestartSec=2
+  # Keep logs local; script writes to /var/log/net-flap
+  # Provide a bit more room for file descriptors
+  LimitNOFILE=65536
+
+  [Install]
+  WantedBy=multi-user.target
+  EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now net-flap-recorder.service
+  sudo systemctl status net-flap-recorder.service --no-pager
+#+end_src
+
+** (Optional) Add logrotate (keeps logs bounded)
+#+begin_src shell :dir /sudo::
+  sudo tee /etc/logrotate.d/net-flap-recorder >/dev/null <<'EOF'
+  /var/log/net-flap/*.log {
+    rotate 14
+    daily
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+  }
+  EOF
+#+end_src
+
+** Where to look
+- /var/log/net-flap/ip-monitor.log  (main evidence)
+- /var/log/net-flap/recorder.log    (baseline snapshots and restarts)
+- journald: sudo journalctl -u net-flap-recorder -S today
+
+
+* Remediation: choose ONE network stack (recommended architectures)
+Mixing these services is where flapping often comes from.
+
+** Option A (recommended in most deployments)
+- Use *NetworkManager* for ethernet + routing + DNS.
+- Use *ModemManager* for WWAN modem management.
+- Disable *dhcpcd* and *quectel-cm*.
+
+Pros:
+- Clean ownership (one manager for LAN, one for modem).
+- Fewer scripts; easier to reason about.
+
+** Option B (script-driven embedded approach)
+- Use *dhcpcd* for ethernet.
+- Use *quectel-cm* for WWAN.
+- Disable *NetworkManager* and *ModemManager*.
+
+Pros:
+- Predictable for minimal OS stacks.
+- More manual but deterministic if scripted well.
+
+* Minimal-risk changes (recommended order)
+Do these one at a time and observe stability (Meraki timeline + reverse SSH).
+
+** Step 1: disable dhcpcd (common conflict with NetworkManager)
+#+BEGIN_SRC shell
+  sudo systemctl stop dhcpcd
+  sudo systemctl disable dhcpcd
+  systemctl is-enabled dhcpcd || true
+#+END_SRC
+
+After change:
+- Recheck routes and DNS.
+#+BEGIN_SRC shell
+  ip -details route show default
+  resolvectl status 2>/dev/null || cat /etc/resolv.conf
+#+END_SRC
+
+** Step 2: if still unstable, disable quectel-cm (let ModemManager own WWAN)
+#+BEGIN_SRC shell
+  sudo systemctl stop quectel-cm
+  sudo systemctl disable quectel-cm
+  systemctl is-enabled quectel-cm || true
+#+END_SRC
+
+After change:
+- Verify WWAN still comes up via ModemManager (if intended).
+#+BEGIN_SRC shell
+  mmcli -L 2>/dev/null || true
+  ip -br addr | egrep -i 'wwan0|wwp|cdc|rmnet' || true
+  ip -details route show default
+#+END_SRC
+
+** Optional: disable Wi-Fi to reduce noise/variables
+#+BEGIN_SRC shell
+  sudo nmcli radio wifi off || true
+  sudo rfkill block wifi || true
+  ip -br link | egrep -i 'wlan|wl|wlp' || true
+#+END_SRC
+
+* Post-change validation checklist
+Run these and ensure the system is consistent.
+
+#+BEGIN_SRC shell
+  echo "=== interfaces ==="
+  ip -br link
+  ip -br addr
+
+  echo
+  echo "=== default routes ==="
+  ip -details route show default
+
+  echo
+  echo "=== DNS ==="
+  resolvectl status 2>/dev/null || cat /etc/resolv.conf
+
+  echo
+  echo "=== running network services (should be reduced) ==="
+  systemctl --type=service --state=running | egrep -i 'NetworkManager|systemd-networkd|dhcpcd|ModemManager|quectel|wwan' || true
+#+END_SRC
+
+Expected outcome (Option A):
+- dhcpcd disabled
+- quectel-cm disabled
+- NetworkManager running
+- ModemManager running
+- stable default route via eth1 (low metric)
+- backup default route via wwan0 (high metric)
+- DNS is sane, and (ideally) WWAN DNS is configured for failover if eth1 disappears
+
+* Notes / device-specific observations (fill per site)
+- Site:
+- Meraki switch model/port:
+- VLAN mode:
+- Wired gateway IP:
+- Reverse SSH target:
+- WWAN provider/APN:
+- Date/time of observed drops:
+- Relevant log excerpts:
+  - /var/log/route-flap.log:
+  - /var/log/kernel-follow.log:
+  - /var/log/net-services-follow.log:
+
+* Appendix: What the key fields mean
+- *proto dhcp*: route installed by DHCP client.
+- *proto boot*: route installed during boot or by non-DHCP manager/script.
+- *metric*: lower metric is preferred route.
+- *NO-CARRIER*: no physical link (cable unplugged or Wi-Fi not associated).
+- *LOWER_UP*: physical carrier present.
+
+# Local Variables:
+# org-confirm-babel-evaluate: (lambda (lang body) (not (string= lang "elisp")))
+# eval: (progn
+#         (when (fboundp 'org-babel-goto-named-src-block)
+#           (org-babel-goto-named-src-block "startup")
+#           (org-babel-execute-src-block)))
+# End:
