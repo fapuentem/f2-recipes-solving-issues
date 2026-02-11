@@ -41,6 +41,7 @@ All code blocks are designed to be idempotent where possible.
 - Internet connection on both systems
 - Mender Cloud account with Tenant Token
 
+
 * Variables (edit these)
 
 #+begin_quote
@@ -64,12 +65,17 @@ Jetson-specific values are set inline in Phase 1 blocks.
 
 * Phase 1: Jetson Device Setup (Ubuntu 20.04)
 
+#+begin_quote
+*RUN ON JETSON:* Open this file in Emacs on the Jetson device, or copy/paste
+commands into a Jetson terminal. Blocks use =:dir /sudo::= for password prompts.
+#+end_quote
+
 ** Step 1.1: Install Mender Client
 
 Direct =.deb= downloads for Mender Client 3.x are no longer publicly accessible.
 The only supported method on Ubuntu 20.04 is the official installer script.
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
 
   curl -fLsS https://get.mender.io -o get-mender.sh
@@ -78,7 +84,7 @@ The only supported method on Ubuntu 20.04 is the official installer script.
 
 Verify installation:
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both
   (dpkg -l | grep mender) 2>/dev/null || true
 #+end_src
 
@@ -89,7 +95,7 @@ ii  mender-client  3.5.x  arm64  Mender client for OTA software updates
 
 ** Step 1.2: Stop client before configuration
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl stop mender-client
 #+end_src
 
@@ -99,7 +105,7 @@ ii  mender-client  3.5.x  arm64  Mender client for OTA software updates
 *ACTION REQUIRED:* Replace =<YOUR_TENANT_TOKEN>= with your actual Mender Cloud tenant token.
 #+end_quote
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
 
   # --- EDIT THIS ---
@@ -120,13 +126,13 @@ CONFEOF
 
 Validate JSON syntax:
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both
   python3 -m json.tool /etc/mender/mender.conf || echo "Invalid JSON or file not found"
 #+end_src
 
 ** Step 1.4: Configure single-rootfs mode
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
 
   sudo mkdir -p /etc/mender/mender.conf.d
@@ -145,13 +151,13 @@ CONFEOF
 
 Validate:
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both
   python3 -m json.tool /etc/mender/mender.conf.d/single-rootfs.conf || echo "Invalid JSON or file not found"
 #+end_src
 
 ** Step 1.5: Ensure device identity exists
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
 
   DEVICE_TYPE="jetson"
@@ -167,7 +173,7 @@ Validate:
 
 ** Step 1.6: Start the client
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl reset-failed mender-client
   sudo systemctl start mender-client
   (sudo systemctl status mender-client --no-pager -l | head -20) 2>/dev/null || true
@@ -175,7 +181,7 @@ Validate:
 
 Follow logs (run interactively):
 
-#+begin_src bash :eval never :dir /ssh:jetson:~
+#+begin_src bash :eval never :dir /sudo::
   journalctl -u mender-client -u mender-authd -u mender-updated -f
 #+end_src
 
@@ -191,7 +197,7 @@ Follow logs (run interactively):
 
 ** Step 1.8: Freeze client version (recommended)
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   sudo apt-mark hold mender-client
   echo "mender-client version locked"
 #+end_src
@@ -322,7 +328,11 @@ Verify:
 
 ** Step 3.5: Verify deployment on Jetson
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_quote
+*RUN ON JETSON:* Execute on Jetson with Emacs or copy/paste to terminal.
+#+end_quote
+
+#+begin_src bash :results output replace :exports both
   cat /data/mender/file/test.txt 2>/dev/null || echo "File not found - deployment may still be in progress"
 #+end_src
 
@@ -408,7 +418,11 @@ Verify:
 
 ** Step 4.6: Monitor execution on device
 
-#+begin_src bash :eval never :dir /ssh:jetson:~
+#+begin_quote
+*RUN ON JETSON:* Execute on Jetson with Emacs or copy/paste to terminal.
+#+end_quote
+
+#+begin_src bash :eval never :dir /sudo::
   journalctl -u mender-client -f
 #+end_src
 
@@ -421,9 +435,13 @@ Expected behavior:
 
 ** Step 4.7: Verify results
 
+#+begin_quote
+*RUN ON JETSON:* Execute on Jetson with Emacs or copy/paste to terminal.
+#+end_quote
+
 Confirm installed packages (example):
 
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both
   (dpkg -l | grep -E "cuda|nvinfer" | head -10) 2>/dev/null || true
 #+end_src
 
@@ -437,62 +455,70 @@ Confirm installed packages (example):
 
 * Service Management Commands
 
-Quick reference for managing Mender client on Jetson.
+#+begin_quote
+*RUN ON JETSON:* Open this file in Emacs on the Jetson device.
+Blocks use =:dir /sudo::= for password prompts.
+#+end_quote
 
 ** Start client
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl start mender-client
   echo "mender-client started"
 #+end_src
 
 ** Stop client
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl stop mender-client
   echo "mender-client stopped"
 #+end_src
 
 ** Restart client
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl restart mender-client
   echo "mender-client restarted"
 #+end_src
 
 ** View client status
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl status mender-client --no-pager -l || true
 #+end_src
 
 ** View recent logs
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   (sudo journalctl -u mender-client -n 50 --no-pager) 2>/dev/null || true
 #+end_src
 
 ** Follow logs in real-time
-#+begin_src bash :eval never :dir /ssh:jetson:~
+#+begin_src bash :eval never :dir /sudo::
   sudo journalctl -u mender-client -f
 #+end_src
 
 * Troubleshooting
 
+#+begin_quote
+*RUN ON JETSON:* Open this file in Emacs on the Jetson device.
+Blocks use =:dir /sudo::= for password prompts.
+#+end_quote
+
 ** Check device authorization status
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both
   cat /var/lib/mender/device_type 2>/dev/null || echo "device_type not found"
   (ls -la /var/lib/mender/) 2>/dev/null || true
 #+end_src
 
 ** Verify configuration files
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both
   cat /etc/mender/mender.conf 2>/dev/null || echo "mender.conf not found"
   cat /etc/mender/mender.conf.d/single-rootfs.conf 2>/dev/null || echo "No single-rootfs.conf"
 #+end_src
 
 ** Check network connectivity to Mender Cloud
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both
   (curl -I https://hosted.mender.io 2>&1 | head -5) 2>/dev/null || echo "Connection failed"
 #+end_src
 
 ** Reset client state (use with caution)
-#+begin_src bash :results output replace :exports both :dir /ssh:jetson:~
+#+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl stop mender-client
   sudo rm -f /var/lib/mender/mender-store
   sudo systemctl start mender-client
