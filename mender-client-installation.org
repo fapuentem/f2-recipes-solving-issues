@@ -49,7 +49,7 @@ The only supported method on Ubuntu 20.04 is the official installer script.
 
   mkdir -p /home/nvidia/Downloads
   curl -fLsS https://get.mender.io -o /home/nvidia/Downloads/get-mender.sh
-  sudo bash /home/nvidia/Downloads/get-mender.sh mender-client
+  bash /home/nvidia/Downloads/get-mender.sh mender-client
 #+end_src
 
 Verify installation:
@@ -66,7 +66,7 @@ ii  mender-client  3.5.x  arm64  Mender client for OTA software updates
 * Step 2: Stop client before configuration
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
-  sudo systemctl stop mender-client
+  systemctl stop mender-client
 #+end_src
 
 * Step 3: Configure Mender Client for Mender Cloud
@@ -81,7 +81,7 @@ ii  mender-client  3.5.x  arm64  Mender client for OTA software updates
   # --- EDIT THIS ---
   TENANT_TOKEN="<YOUR_TENANT_TOKEN>"
 
-  sudo tee /etc/mender/mender.conf > /dev/null <<CONFEOF
+  tee /etc/mender/mender.conf > /dev/null <<CONFEOF
 {
   "ServerURL": "https://hosted.mender.io",
   "TenantToken": "$TENANT_TOKEN",
@@ -99,9 +99,9 @@ CONFEOF
 #+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
 
-  sudo mkdir -p /etc/mender/mender.conf.d
+  mkdir -p /etc/mender/mender.conf.d
 
-  sudo tee /etc/mender/mender.conf.d/single-rootfs.conf > /dev/null <<'CONFEOF'
+  tee /etc/mender/mender.conf.d/single-rootfs.conf > /dev/null <<'CONFEOF'
 {
   "RootfsPartA": "",
   "RootfsPartB": "",
@@ -120,28 +120,23 @@ CONFEOF
 
   DEVICE_TYPE="jetson"
 
-  if [ -f /var/lib/mender/device_type ]; then
-    echo "device_type exists:"
-    cat /var/lib/mender/device_type
-  else
-    echo "device_type=$DEVICE_TYPE" | sudo tee /var/lib/mender/device_type
-    echo "Created device_type file"
-  fi
+  echo "device_type=$DEVICE_TYPE" | tee /var/lib/mender/device_type
+  echo "Created device_type file"
 #+end_src
 
 * Step 6: Start the client
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
-  sudo systemctl reset-failed mender-client
-  sudo systemctl start mender-client
-  (sudo systemctl status mender-client --no-pager -l | head -20) 2>/dev/null || true
+  systemctl reset-failed mender-client
+  systemctl start mender-client
+  (systemctl status mender-client --no-pager -l | head -20) 2>/dev/null || true
 #+end_src
 
 Follow logs (run interactively):
 
-#+begin_src bash :eval never :dir /sudo::
-  journalctl -u mender-client -f
-#+end_src
+#+begin_example
+journalctl -u mender-client -f
+#+end_example
 
 * Step 7: Accept device in Mender Cloud
 
@@ -152,13 +147,6 @@ Follow logs (run interactively):
 1. Navigate to *Devices* → *Pending*
 2. Accept the device
 3. Assign to static group: =jetson-test=
-
-* Step 8: Freeze client version (recommended)
-
-#+begin_src bash :results output replace :exports both :dir /sudo::
-  sudo apt-mark hold mender-client
-  echo "mender-client version locked"
-#+end_src
 
 * References
 
