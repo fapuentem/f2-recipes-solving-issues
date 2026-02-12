@@ -47,9 +47,9 @@ The only supported method on Ubuntu 20.04 is the official installer script.
 #+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
 
-  curl -fLsS https://get.mender.io -o /tmp/get-mender.sh
-  sudo bash /tmp/get-mender.sh mender-client
-  rm -f /tmp/get-mender.sh
+  mkdir -p /home/nvidia/Downloads
+  curl -fLsS https://get.mender.io -o /home/nvidia/Downloads/get-mender.sh
+  sudo bash /home/nvidia/Downloads/get-mender.sh mender-client
 #+end_src
 
 Verify installation:
