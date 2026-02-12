@@ -1,0 +1,175 @@
+#+TITLE: Mender Client Installation Recipe (Jetson Orin NX)
+#+AUTHOR: Eduardo Torres
+#+PROPERTY: header-args:bash :results output replace :exports both
+#+OPTIONS: toc:2 num:nil
+#+EXCLUDE_TAGS: noexport
+#+STARTUP: showall
+
+* Code :noexport:
+#+NAME: startup
+#+BEGIN_SRC elisp :results none
+  (load-theme 'modus-vivendi)
+  (setf fill-column 100)
+    (org-babel-do-load-languages
+     'org-babel-load-languages
+     '((shell . t)
+       (emacs-lisp . t)))
+#+END_SRC
+
+* Context
+
+This document provides a step-by-step guide for installing and configuring the *Mender OTA* client on NVIDIA Jetson devices.
+
+#+begin_quote
+The recipe uses single-rootfs mode (no A/B partitions) suitable for JetPack installations.
+All code blocks are designed to be idempotent where possible.
+#+end_quote
+
+** Target environment
+
+| Component | Target                                    |
+|-----------+-------------------------------------------|
+| Device    | Jetson (JetPack 5.1, Ubuntu 20.04, arm64) |
+| Backend   | Mender Cloud (hosted.mender.io)           |
+| Mode      | single-rootfs (no A/B)                    |
+
+** System requirements
+
+- NVIDIA Jetson Orin NX with JetPack 5.1+
+- Internet connection
+- Mender Cloud account with Tenant Token
+
+* Step 1: Install Mender Client
+
+Direct =.deb= downloads for Mender Client 3.x are no longer publicly accessible.
+The only supported method on Ubuntu 20.04 is the official installer script.
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  set -euo pipefail
+
+  curl -fLsS https://get.mender.io -o /tmp/get-mender.sh
+  sudo bash /tmp/get-mender.sh mender-client
+  rm -f /tmp/get-mender.sh
+#+end_src
+
+Verify installation:
+
+#+begin_src bash :results output replace :exports both
+  (dpkg -l | grep mender) 2>/dev/null || true
+#+end_src
+
+Expected output:
+#+begin_example
+ii  mender-client  3.5.x  arm64  Mender client for OTA software updates
+#+end_example
+
+* Step 2: Stop client before configuration
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo systemctl stop mender-client
+#+end_src
+
+* Step 3: Configure Mender Client for Mender Cloud
+
+#+begin_quote
+*ACTION REQUIRED:* Replace =<YOUR_TENANT_TOKEN>= with your actual Mender Cloud tenant token.
+#+end_quote
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  set -euo pipefail
+
+  # --- EDIT THIS ---
+  TENANT_TOKEN="<YOUR_TENANT_TOKEN>"
+
+  sudo tee /etc/mender/mender.conf > /dev/null <<CONFEOF
+{
+  "ServerURL": "https://hosted.mender.io",
+  "TenantToken": "$TENANT_TOKEN",
+  "InventoryPollIntervalSeconds": 300,
+  "UpdatePollIntervalSeconds": 900,
+  "RetryPollIntervalSeconds": 300
+}
+CONFEOF
+
+  echo "mender.conf written"
+#+end_src
+
+* Step 4: Configure single-rootfs mode
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  set -euo pipefail
+
+  sudo mkdir -p /etc/mender/mender.conf.d
+
+  sudo tee /etc/mender/mender.conf.d/single-rootfs.conf > /dev/null <<'CONFEOF'
+{
+  "RootfsPartA": "",
+  "RootfsPartB": "",
+  "BootUtilitiesSetActive": "",
+  "BootUtilitiesGetNextActive": ""
+}
+CONFEOF
+
+  echo "single-rootfs.conf written"
+#+end_src
+
+* Step 5: Ensure device identity exists
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  set -euo pipefail
+
+  DEVICE_TYPE="jetson"
+
+  if [ -f /var/lib/mender/device_type ]; then
+    echo "device_type exists:"
+    cat /var/lib/mender/device_type
+  else
+    echo "device_type=$DEVICE_TYPE" | sudo tee /var/lib/mender/device_type
+    echo "Created device_type file"
+  fi
+#+end_src
+
+* Step 6: Start the client
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo systemctl reset-failed mender-client
+  sudo systemctl start mender-client
+  (sudo systemctl status mender-client --no-pager -l | head -20) 2>/dev/null || true
+#+end_src
+
+Follow logs (run interactively):
+
+#+begin_src bash :eval never :dir /sudo::
+  journalctl -u mender-client -f
+#+end_src
+
+* Step 7: Accept device in Mender Cloud
+
+#+begin_quote
+*MANUAL STEP:* Complete in Mender Cloud UI.
+#+end_quote
+
+1. Navigate to *Devices* → *Pending*
+2. Accept the device
+3. Assign to static group: =jetson-test=
+
+* Step 8: Freeze client version (recommended)
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo apt-mark hold mender-client
+  echo "mender-client version locked"
+#+end_src
+
+* References
+
+- [[https://docs.mender.io/][Mender Documentation]]
+- [[https://docs.mender.io/client-installation/install-with-debian-package][Mender Client Installation Guide]]
+- [[https://hub.mender.io/t/jetson/5843][Mender Hub: Jetson Integration]]
+
+# Local Variables:
+# org-confirm-babel-evaluate: (lambda (lang body) (not (string= lang "elisp")))
+# eval: (progn
+#         (when (fboundp 'org-babel-goto-named-src-block)
+#           (org-babel-goto-named-src-block "startup")
+#           (org-babel-execute-src-block)))
+# End:
