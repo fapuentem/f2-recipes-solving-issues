@@ -118,13 +118,83 @@ CONFEOF
 #+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
 
-  DEVICE_TYPE="jetson"
+  DEVICE_TYPE="f2-jetson-orin-nx"
 
   echo "device_type=$DEVICE_TYPE" | tee /var/lib/mender/device_type
   echo "Created device_type file"
 #+end_src
 
-* Step 6: Start the client
+* Step 6: Configure custom device identity
+
+By default, Mender selects the Ethernet interface with the lowest =ifindex=, typically =eth0=.
+If your devices use =eth1= or =eth2= for connectivity, override the identity script.
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  set -euo pipefail
+
+  mkdir -p /etc/mender/identity
+
+  tee /etc/mender/identity/mender-device-identity > /dev/null <<'IDEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Interface priority (can override with IF_ORDER)
+IFS_DEFAULT=("eth1" "eth2" "eth0")
+read -r -a IF_ORDER <<< "${IF_ORDER:-${IFS_DEFAULT[*]}}"
+
+is_valid_mac() {
+  local mac="$1"
+  local iface="$2"
+
+  [[ "$mac" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || return 1
+  mac="${mac,,}"
+
+  [[ "$mac" != "00:00:00:00:00:00" ]] || return 1
+  [[ "$mac" != "00:00:00:00:00:01" ]] || return 1
+  [[ "$mac" != "ff:ff:ff:ff:ff:ff" ]] || return 1
+
+  # Skip virtual interfaces
+  [[ -e "/sys/class/net/$iface/device" ]] || return 1
+
+  return 0
+}
+
+for IF in "${IF_ORDER[@]}"; do
+  addr_file="/sys/class/net/$IF/address"
+  [[ -r "$addr_file" ]] || continue
+
+  mac=$(<"$addr_file")
+
+  if is_valid_mac "$mac" "$IF"; then
+    echo "mac=${mac,,}"
+    exit 0
+  fi
+done
+
+echo "No valid MAC found on ${IF_ORDER[*]}" >&2
+exit 1
+IDEOF
+
+  chmod +x /etc/mender/identity/mender-device-identity
+  echo "mender-device-identity installed"
+#+end_src
+
+Test it:
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  /etc/mender/identity/mender-device-identity
+#+end_src
+
+Expected output:
+#+begin_example
+mac=aa:bb:cc:dd:ee:ff
+#+end_example
+
+#+begin_quote
+Changing the identity will cause the device to appear as a new device in Mender Cloud and require re-acceptance.
+#+end_quote
+
+* Step 7: Start the client
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   systemctl reset-failed mender-client
@@ -138,7 +208,7 @@ Follow logs (run interactively):
 journalctl -u mender-client -f
 #+end_example
 
-* Step 7: Accept device in Mender Cloud
+* Step 8: Accept device in Mender Cloud
 
 #+begin_quote
 *MANUAL STEP:* Complete in Mender Cloud UI.
