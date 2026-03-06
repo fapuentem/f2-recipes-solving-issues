@@ -214,6 +214,33 @@ Then it extracts and replaces ~/projects/F2-App.
 
 #+RESULTS:
 
+* Restore F2 certificates from backup
+
+#+begin_src bash :results output replace :exports both :session f2
+  set -Eeuo pipefail
+
+  CERTS_DIR="$HOME/projects/F2-App/certs"
+  BACKUP_DIR="$HOME/backups"
+
+  # Find latest backup
+  LATEST_BACKUP=$(ls -t "$BACKUP_DIR"/F2-certs-*.tar.gz 2>/dev/null | head -n 1 || true)
+
+  if [ -z "$LATEST_BACKUP" ]; then
+    echo "ERROR: No certificate backup found in $BACKUP_DIR"
+    exit 1
+  fi
+
+  echo "Restoring certificates from:"
+  echo "  $LATEST_BACKUP"
+
+  mkdir -p "$CERTS_DIR"
+
+  tar -xzf "$LATEST_BACKUP" -C "$CERTS_DIR"
+
+  echo
+  echo "Certificates restored to $CERTS_DIR"
+  ls -la "$CERTS_DIR"
+#+end_src
 
 * F2 App deployment
 
