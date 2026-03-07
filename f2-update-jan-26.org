@@ -31,7 +31,7 @@
   BACKUP_TGZ="$BACKUP_DIR/F2-App-backup-$STAMP.tar.gz"
 
   # GitHub auth (only needed for private repos / rate limits)
-  export GITHUB_TOKEN="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"    # or load from /etc/f2.env
+  export GITHUB_TOKEN=""    # or load from /etc/f2.env
   echo "REPO=$REPO_OWNER/$REPO_NAME TAG=$TAG"
   echo "APP_DIR=$APP_DIR"
 #+end_src
