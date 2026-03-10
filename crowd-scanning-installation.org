@@ -46,15 +46,22 @@ All code blocks are designed to be idempotent where possible.
 #+name: vars
 #+begin_src bash :results output replace :exports both :session f2cs
   # --- EDIT THESE ---
+  export REPO_OWNER="VisiontechProjects"
+  export REPO_NAME="F2_Crowd_Scanning"
+  export RELEASE_TAG="v1.2"
+  export GITHUB_TOKEN=""                          # required: private repo
+
   export PROJECT_DIR="/home/nvidia/projects/F2_Crowd_Scanning"
   export FACEME_DIR="$PROJECT_DIR/faceme"
   export VENV_DIR="$PROJECT_DIR/faceme_env"
-  export GITHUB_REPO="https://github.com/VisiontechProjects/F2_Crowd_Scanning.git"
+  export DOWNLOAD_DIR="$HOME/Downloads"
+  export STAMP="$(date +%Y%m%d-%H%M%S)"
 
   # FaceMe SDK version
   export FACEME_SDK_INSTALLER="FaceMe_SDK_Jetson_JetPack513_7.0.0.run"
   export FACEME_WHEEL="FaceMe-7.0.0-py38-none-manylinux2014_aarch64.whl"
 
+  echo "REPO=$REPO_OWNER/$REPO_NAME TAG=$RELEASE_TAG"
   echo "PROJECT_DIR=$PROJECT_DIR"
   echo "FACEME_DIR=$FACEME_DIR"
   echo "VENV_DIR=$VENV_DIR"
@@ -141,14 +148,39 @@ jtop 4.x.x
 ** Step 2.2: Clone repository
 
 #+begin_src bash :results output replace :exports both :session f2cs
-  set -euo pipefail
+  set -Eeuo pipefail
+
+  TARBALL_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/tags/${RELEASE_TAG}.tar.gz"
+  TARBALL_PATH="${DOWNLOAD_DIR}/${REPO_NAME}-${RELEASE_TAG}.tar.gz"
+  EXTRACT_DIR="${DOWNLOAD_DIR}/${REPO_NAME}-${RELEASE_TAG}-extract-${STAMP}"
+
+  mkdir -p "$DOWNLOAD_DIR"
 
   if [ -d "$PROJECT_DIR" ]; then
-      echo "Project directory exists. Pulling latest changes..."
-      cd "$PROJECT_DIR" && git pull
+      echo "Project directory already exists. Skipping download."
   else
-      echo "Cloning repository..."
-      git clone "$GITHUB_REPO" "$PROJECT_DIR"
+      echo "Downloading: $TARBALL_URL"
+      if [ -n "${GITHUB_TOKEN:-}" ]; then
+          curl -L -H "Authorization: Bearer $GITHUB_TOKEN" -o "$TARBALL_PATH" "$TARBALL_URL"
+      else
+          curl -L -o "$TARBALL_PATH" "$TARBALL_URL"
+      fi
+
+      echo "Saved to: $TARBALL_PATH"
+      mkdir -p "$EXTRACT_DIR"
+      tar -xzf "$TARBALL_PATH" -C "$EXTRACT_DIR"
+
+      SRC_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+      if [ -z "$SRC_DIR" ]; then
+          echo "ERROR: could not find extracted source folder in $EXTRACT_DIR"
+          ls -la "$EXTRACT_DIR"
+          exit 1
+      fi
+      echo "Extracted source dir: $SRC_DIR"
+
+      mkdir -p "$PROJECT_DIR"
+      rsync -a "$SRC_DIR/" "$PROJECT_DIR/"
+      echo "Deployed to: $PROJECT_DIR"
   fi
 #+end_src
 
