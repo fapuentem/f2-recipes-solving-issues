@@ -72,6 +72,8 @@ All code blocks are designed to be idempotent where possible.
 ** Step 1.1: Update system and install core packages
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
+  export DEBIAN_FRONTEND=noninteractive
+
   sudo apt-get update && sudo apt-get upgrade -y
 
   sudo apt-get install -y \
@@ -82,6 +84,8 @@ All code blocks are designed to be idempotent where possible.
 ** Step 1.2: Install system utilities and hardware tools
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
+  export DEBIAN_FRONTEND=noninteractive
+
   sudo apt-get install -y \
       apt-utils wget curl unzip tar zip \
       tree htop nano \
@@ -93,16 +97,17 @@ All code blocks are designed to be idempotent where possible.
 ** Step 1.3: Install CUDA/cuDNN/TensorRT (JetPack 5.x)
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
-  sudo apt-get install -y \
-      nvidia-cuda \
-      libcudnn8 libcudnn8-dev \
+  export DEBIAN_FRONTEND=noninteractive
+
+  sudo apt-get install -y nvidia-cuda libcudnn8 libcudnn8-dev \
       tensorrt libnvinfer8 libnvinfer-dev python3-libnvinfer
 #+end_src
 
 ** Step 1.4: Configure environment and install Jetson Stats
 
 #+begin_src bash :results output replace :exports both
-  cat >> ~/.bashrc <<'EOF'
+  if ! grep -q "CUDA/TensorRT" ~/.bashrc; then
+      cat >> ~/.bashrc <<'EOF'
 
 ### User PATH
 export PATH="$HOME/.local/bin:$PATH"
@@ -112,8 +117,10 @@ export PATH="/usr/local/cuda/bin:$PATH"
 export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
 export PATH="/usr/src/tensorrt/bin:$PATH"
 EOF
-
-  echo "Environment paths added to .bashrc"
+      echo "Environment paths added to .bashrc"
+  else
+      echo "Environment paths already configured in .bashrc"
+  fi
 #+end_src
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
@@ -133,22 +140,12 @@ jtop 4.x.x
 
 * Phase 2: Project Setup
 
-** Step 2.1: Create project directories
-
-#+begin_src bash :results output replace :exports both
-  set -euo pipefail
-
-  mkdir -p /home/nvidia/projects
-  mkdir -p /home/nvidia/tools
-
-  echo "Directories created:"
-  ls -la /home/nvidia/projects
-#+end_src
-
-** Step 2.2: Clone repository
+** Step 2.1: Clone repository
 
 #+begin_src bash :results output replace :exports both :session f2cs
   set -Eeuo pipefail
+
+  mkdir -p "$(dirname "$PROJECT_DIR")"
 
   TARBALL_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/tags/${RELEASE_TAG}.tar.gz"
   TARBALL_PATH="${DOWNLOAD_DIR}/${REPO_NAME}-${RELEASE_TAG}.tar.gz"
@@ -184,7 +181,7 @@ jtop 4.x.x
   fi
 #+end_src
 
-** Step 2.3: Verify clone
+** Step 2.2: Verify clone
 
 #+begin_src bash :results output replace :exports both :session f2cs
   (ls -la "$PROJECT_DIR/" | head -n 20) 2>/dev/null || true
@@ -192,18 +189,12 @@ jtop 4.x.x
 
 * Phase 3: FaceMe SDK Installation
 
-** Step 3.1: Create FaceMe directory
-
-#+begin_src bash :results output replace :exports both :session f2cs
-  mkdir -p "$FACEME_DIR"
-  echo "Created: $FACEME_DIR"
-#+end_src
-
-** Step 3.2: Download FaceMe SDK
+** Step 3.1: Download FaceMe SDK
 
 #+begin_src bash :results output replace :exports both :session f2cs
   set -euo pipefail
 
+  mkdir -p "$FACEME_DIR"
   INSTALLER_PATH="$FACEME_DIR/$FACEME_SDK_INSTALLER"
 
   if [ -f "$INSTALLER_PATH" ]; then
@@ -215,17 +206,11 @@ jtop 4.x.x
           -O "$INSTALLER_PATH"
   fi
 
+  chmod +x "$INSTALLER_PATH"
   ls -la "$FACEME_DIR"/*.run
 #+end_src
 
-** Step 3.3: Make installer executable
-
-#+begin_src bash :results output replace :exports both :session f2cs
-  chmod +x "$FACEME_DIR/$FACEME_SDK_INSTALLER"
-  ls -la "$FACEME_DIR"/*.run
-#+end_src
-
-** Step 3.4: Run FaceMe SDK installer
+** Step 3.2: Run FaceMe SDK installer
 
 #+begin_quote
 *RUN ON JETSON TERMINAL:* This step requires sudo password and takes ~10 minutes.
@@ -248,13 +233,7 @@ Enter these values:
 | Install Sample codes    | y                                                |
 | Confirm installation    | y                                                |
 
-*** Verify installation
-
-#+begin_src bash :results output replace :exports both :session f2cs
-  (ls -la "$FACEME_DIR/FaceMeSDK/" | head -n 10) 2>/dev/null || true
-#+end_src
-
-** Step 3.5: Configure environment variables
+** Step 3.3: Configure environment variables
 
 #+begin_src bash :results output replace :exports both :session f2cs
   set -euo pipefail
@@ -271,7 +250,7 @@ Enter these values:
   echo "FACEME_HOME=$FACEME_HOME"
 #+end_src
 
-** Step 3.6: Verify FaceMe SDK installation
+** Step 3.4: Verify FaceMe SDK installation
 
 #+begin_src bash :results output replace :exports both :session f2cs
   (ls -la "$FACEME_DIR/FaceMeSDK/" | head -n 20) 2>/dev/null || true
@@ -329,53 +308,7 @@ Enter these values:
 Provide this device identifier to your administrator to generate a license key.
 
 #+begin_src bash :results output replace :exports both
-  set -euo pipefail
-
-  # Interface priority order for Jetson devices
-  IF_ORDER=("eth1" "eth2" "eth0")
-
-  is_valid_mac() {
-    local mac="$1"
-    local iface="${2:-}"
-
-    # Must match xx:xx:xx:xx:xx:xx format
-    [[ "$mac" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || return 1
-
-    # Normalize to lowercase
-    mac="${mac,,}"
-
-    # Reject invalid/dummy MACs
-    [[ "$mac" != "00:00:00:00:00:00" ]] || return 1
-    [[ "$mac" != "00:00:00:00:00:01" ]] || return 1
-    [[ "$mac" != "ff:ff:ff:ff:ff:ff" ]] || return 1
-
-    # Skip virtual interfaces (no physical device link)
-    if [[ -n "$iface" ]] && [[ ! -e "/sys/class/net/$iface/device" ]]; then
-      return 1
-    fi
-
-    return 0
-  }
-
-  echo "=== Network Interfaces ==="
-  (ip link show | grep -E "^[0-9]+:|ether") 2>/dev/null || true
-
-  echo ""
-  echo "=== Device Identifier for License Request ==="
-
-  for IF in "${IF_ORDER[@]}"; do
-    addr_file="/sys/class/net/$IF/address"
-    [[ -r "$addr_file" ]] || continue
-    mac=$(<"$addr_file")
-    if is_valid_mac "$mac" "$IF"; then
-      mac_no_colon=${mac//:/}
-      printf 'f2_%s\n' "${mac_no_colon,,}"
-      exit 0
-    fi
-  done
-
-  echo "Error: no valid MAC found on ${IF_ORDER[*]}." >&2
-  exit 1
+  bash /home/nvidia/tools/f2-maintenance-tools/get-device-id-f2.sh
 #+end_src
 
 ** Step 5.2: Copy sample script to demo directory
@@ -390,16 +323,13 @@ Provide this device identifier to your administrator to generate a license key.
 ** Step 5.3: Activate license
 
 #+begin_quote
-*ACTION REQUIRED:* Replace =YOUR_LICENSE_KEY_HERE= with the actual license key before executing.
+*ACTION REQUIRED:* Add =YOUR LICENSE KEY= before executing.
 #+end_quote
 
 #+begin_src bash :results output replace :exports both :session f2cs
   # --- EDIT THIS ---
-  export LICENSE_KEY="YOUR_LICENSE_KEY_HERE"
-  echo "LICENSE_KEY set"
-#+end_src
+  export LICENSE_KEY=""
 
-#+begin_src bash :results output replace :exports both :session f2cs
   cd "$FACEME_DIR/FaceMeSDK/DemoSystem/Program/"
   $VENV_DIR/bin/python3 FaceMePythonSample.py activatelicense "$LICENSE_KEY"
 #+end_src
@@ -423,30 +353,40 @@ Expected output:
 
 * Phase 6: Application Configuration
 
-** Step 6.1: Backup current configuration
+** Camera variables (edit these)
 
 #+begin_src bash :results output replace :exports both :session f2cs
-  cp "$PROJECT_DIR/config/config.ini" \
-     "$PROJECT_DIR/config/config.ini.backup.$(date +%Y%m%d)"
+  set +H  # disable history expansion so '!' in URLs/passwords is treated literally
 
-  ls -la "$PROJECT_DIR/config/"
+  # --- EDIT THESE ---
+  export CAM0_URL=""
+  export CAM0_NAME=""
+  export CAM0_ID=""
+
+  export CAM1_URL=""
+  export CAM1_NAME=""
+  export CAM1_ID=""
+
+  # Sanitize names: replace spaces with hyphens
+  CAM0_NAME="${CAM0_NAME// /-}"
+  CAM1_NAME="${CAM1_NAME// /-}"
+
+  echo "CAM0: $CAM0_NAME (ID=$CAM0_ID)"
+  echo "CAM1: $CAM1_NAME (ID=$CAM1_ID)"
 #+end_src
 
-** Step 6.2: View current configuration
+** Step 6.1: Write configuration
+
+#+begin_quote
+*NOTE:* Delete the =[CAMERA_1]= block from the code below before running if the device has only one camera.
+#+end_quote
 
 #+begin_src bash :results output replace :exports both :session f2cs
-  cat "$PROJECT_DIR/config/config.ini"
-#+end_src
+  set -euo pipefail
 
-** Step 6.3: Configure cameras
-
-Edit the configuration file to add your camera streams.
-
-Example configuration:
-
-#+begin_example
+  cat > "$PROJECT_DIR/config/config.ini" <<EOF
 [FACEME_SDK]
-APP_BUNDLE_PATH = /home/nvidia/projects/F2_Crowd_Scanning/faceme/FaceMeSDK/DemoSystem/Program
+APP_BUNDLE_PATH = $FACEME_DIR/FaceMeSDK/DemoSystem/Program
 APP_CACHE_PATH = /home/nvidia/.cache
 APP_DATA_PATH = /home/nvidia/.local/share
 SDK_MODE = VIDEO_RECOGNITION
@@ -456,15 +396,24 @@ MAX_LOG_SIZE_IN_MB = 10
 LOGGING_LEVEL = DEBUG
 
 [WEB_PLATFORM]
-CHECK_FACE_TEMPLATE_URL = https://faces2-dev-api.faces2.info/api/v1/platform/checkFaceTemplate
+CHECK_FACE_TEMPLATE_URL = https://api.FACES2.net/api/v1/platform/checkFaceTemplate
 PLATFORM = Vtech@PlatformToken-+
 
 [CAMERA_0]
-VIDEO_PATH = rtsp://user:password@192.168.1.120/cam/realmonitor?channel=1&subtype=2
+VIDEO_PATH = ${CAM0_URL}
 TAGS = VT
-NAME = Camera-1
-CAMERA_ID = 1
-#+end_example
+NAME = ${CAM0_NAME}
+CAMERA_ID = ${CAM0_ID}
+
+[CAMERA_1]
+VIDEO_PATH = ${CAM1_URL}
+TAGS = VT
+NAME = ${CAM1_NAME}
+CAMERA_ID = ${CAM1_ID}
+EOF
+
+  echo "Configuration written to: $PROJECT_DIR/config/config.ini"
+#+end_src
 
 * Phase 7: Quick Test (Development Only)
 
@@ -476,7 +425,12 @@ Skip this phase if deploying for production - proceed directly to Phase 8.
 ** Step 7.1: Configure license key for terminal testing
 
 #+begin_src bash :results output replace :exports both :session f2cs
-  echo "export FACEME_LICENSE_KEY=\"$LICENSE_KEY\"" >> /home/nvidia/.bashrc
+  if ! grep -q "FACEME_LICENSE_KEY" /home/nvidia/.bashrc; then
+      echo "export FACEME_LICENSE_KEY=\"$LICENSE_KEY\"" >> /home/nvidia/.bashrc
+      echo "FACEME_LICENSE_KEY added to .bashrc"
+  else
+      echo "FACEME_LICENSE_KEY already configured in .bashrc"
+  fi
   export FACEME_LICENSE_KEY="$LICENSE_KEY"
   echo "FACEME_LICENSE_KEY configured for terminal testing"
 #+end_src
@@ -512,25 +466,25 @@ Systemd services do not inherit environment variables from =.bashrc=.
   set -euo pipefail
 
   cat > "$PROJECT_DIR/f2_crowd_scanner.service" <<SERVICEEOF
-  [Unit]
-  Description=F2 Crowd Scanning FaceMe Service
-  After=network.target
-  StartLimitBurst=3
-  StartLimitIntervalSec=60
+[Unit]
+Description=F2 Crowd Scanning FaceMe Service
+After=network.target
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
-  [Service]
-  Type=simple
-  WorkingDirectory=/home/nvidia/projects/F2_Crowd_Scanning
-  ExecStart=/usr/bin/script -q -c "/home/nvidia/projects/F2_Crowd_Scanning/faceme_env/bin/python /home/nvidia/projects/F2_Crowd_Scanning/main.py" /dev/null
-  Restart=always
-  RestartSec=10
-  Environment=FACEME_LICENSE_KEY=$LICENSE_KEY
-  StandardOutput=journal
-  StandardError=journal
+[Service]
+Type=simple
+WorkingDirectory=/home/nvidia/projects/F2_Crowd_Scanning
+ExecStart=/usr/bin/script -q -c "/home/nvidia/projects/F2_Crowd_Scanning/faceme_env/bin/python /home/nvidia/projects/F2_Crowd_Scanning/main.py" /dev/null
+Restart=always
+RestartSec=10
+Environment=FACEME_LICENSE_KEY=$LICENSE_KEY
+StandardOutput=journal
+StandardError=journal
 
-  [Install]
-  WantedBy=multi-user.target
-  SERVICEEOF
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
 
   echo "Service file created at: $PROJECT_DIR/f2_crowd_scanner.service"
 #+end_src
@@ -546,18 +500,38 @@ Systemd services do not inherit environment variables from =.bashrc=.
   echo "Service file installed and temp file removed"
 #+end_src
 
-** Step 8.2: Enable and start service
+** Step 8.2: Install restart timer files
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  sudo cp /home/nvidia/projects/F2_Crowd_Scanning/tools/f2_crowd_scanner_restart.service \
+       /etc/systemd/system/
+  sudo cp /home/nvidia/projects/F2_Crowd_Scanning/tools/f2_crowd_scanner_restart.timer \
+       /etc/systemd/system/
+
+  echo "Restart timer files installed"
+  ls -la /etc/systemd/system/f2_crowd_scanner*
+#+end_src
+
+** Step 8.3: Enable and start services
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl daemon-reload
   sudo systemctl enable f2_crowd_scanner.service
   sudo systemctl start f2_crowd_scanner.service
+  sudo systemctl enable f2_crowd_scanner_restart.timer
+  sudo systemctl start f2_crowd_scanner_restart.timer
 #+end_src
 
-** Step 8.3: Verify service status
+** Step 8.4: Verify service status
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   sudo systemctl status f2_crowd_scanner.service --no-pager -l
+#+end_src
+
+** Step 8.5: Verify restart timer
+
+#+begin_src bash :results output replace :exports both :dir /sudo::
+  systemctl list-timers | grep f2
 #+end_src
 
 * Phase 9: Enable FaceMe SDK Debug Logging (Optional)
@@ -621,42 +595,6 @@ Quick reference for managing the F2 Crowd Scanner service.
   sudo systemctl reset-failed f2_crowd_scanner.service
   sudo systemctl start f2_crowd_scanner.service
 #+end_src
-
-* Troubleshooting
-
-** Check system logs
-#+begin_src bash :results output replace :exports both
-  (dmesg | tail -n 50) 2>/dev/null || true
-#+end_src
-
-** Verify SDK installation
-#+begin_src bash :results output replace :exports both :session f2cs
-  ls -la "$FACEME_DIR/FaceMeSDK/"
-#+end_src
-
-** Check Python environment
-#+begin_src bash :results output replace :exports both :session f2cs
-  $VENV_DIR/bin/pip list
-#+end_src
-
-** View FaceMe SDK logs
-#+begin_src bash :results output replace :exports both :dir /sudo::
-  sudo ls -la /root/.local/share/CyberLink/FaceMeSDK/Developer/
-  sudo tail -100 /root/.local/share/CyberLink/FaceMeSDK/Developer/FaceMeSDK_*.log 2>/dev/null || echo "No SDK logs found"
-#+end_src
-
-** Reboot device
-#+begin_src bash :results output replace :exports both :dir /sudo::
-  sudo reboot
-#+end_src
-
-* Quick decision tree
-
-- Service not starting → check =journalctl -u f2_crowd_scanner=
-- License error → verify MAC address and re-activate
-- Camera not detected → verify RTSP URL in config.ini
-- FaceMe SDK error → check =$FACEME_HOME= environment variable
-- Python import error → verify virtual environment activation
 
 * Key takeaway
 
