@@ -48,7 +48,7 @@ All code blocks are designed to be idempotent where possible.
   # --- EDIT THESE ---
   export REPO_OWNER="VisiontechProjects"
   export REPO_NAME="F2_Crowd_Scanning"
-  export RELEASE_TAG="v1.2"
+  export RELEASE_TAG="v1.4"
   export GITHUB_TOKEN=""                          # required: private repo
 
   export PROJECT_DIR="/home/nvidia/projects/F2_Crowd_Scanning"
@@ -130,7 +130,7 @@ EOF
 ** Step 1.5: Verify installation
 
 #+begin_src bash :results output replace :exports both
-  jtop --version || echo "jtop not found - reboot may be required"
+  jtop --version
 #+end_src
 
 Expected output:
@@ -145,16 +145,15 @@ jtop 4.x.x
 #+begin_src bash :results output replace :exports both :session f2cs
   set -Eeuo pipefail
 
-  mkdir -p "$(dirname "$PROJECT_DIR")"
-
   TARBALL_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/tags/${RELEASE_TAG}.tar.gz"
   TARBALL_PATH="${DOWNLOAD_DIR}/${REPO_NAME}-${RELEASE_TAG}.tar.gz"
   EXTRACT_DIR="${DOWNLOAD_DIR}/${REPO_NAME}-${RELEASE_TAG}-extract-${STAMP}"
 
   mkdir -p "$DOWNLOAD_DIR"
 
-  if [ -d "$PROJECT_DIR" ]; then
-      echo "Project directory already exists. Skipping download."
+  # --- Download ---
+  if [ -f "$TARBALL_PATH" ]; then
+      echo "Tarball already downloaded: $TARBALL_PATH"
   else
       echo "Downloading: $TARBALL_URL"
       if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -162,23 +161,37 @@ jtop 4.x.x
       else
           curl -L -o "$TARBALL_PATH" "$TARBALL_URL"
       fi
-
       echo "Saved to: $TARBALL_PATH"
-      mkdir -p "$EXTRACT_DIR"
-      tar -xzf "$TARBALL_PATH" -C "$EXTRACT_DIR"
+  fi
 
-      SRC_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
-      if [ -z "$SRC_DIR" ]; then
-          echo "ERROR: could not find extracted source folder in $EXTRACT_DIR"
-          ls -la "$EXTRACT_DIR"
-          exit 1
-      fi
-      echo "Extracted source dir: $SRC_DIR"
+  # --- Extract ---
+  mkdir -p "$EXTRACT_DIR"
+  tar -xzf "$TARBALL_PATH" -C "$EXTRACT_DIR"
 
+  SRC_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+  if [ -z "$SRC_DIR" ]; then
+      echo "ERROR: could not find extracted source folder in $EXTRACT_DIR"
+      ls -la "$EXTRACT_DIR"
+      exit 1
+  fi
+  echo "Extracted source dir: $SRC_DIR"
+
+  # --- Deploy ---
+  if [ -d "$PROJECT_DIR" ] && [ -n "$(ls -A "$PROJECT_DIR" 2>/dev/null)" ]; then
+      echo "Existing installation detected. Updating (preserving faceme, faceme_env, config, logs)..."
+      rsync -a \
+          --exclude='faceme' \
+          --exclude='faceme_env' \
+          --exclude='config' \
+          --exclude='logs' \
+          "$SRC_DIR/" "$PROJECT_DIR/"
+  else
+      echo "Fresh installation. Deploying all files..."
       mkdir -p "$PROJECT_DIR"
       rsync -a "$SRC_DIR/" "$PROJECT_DIR/"
-      echo "Deployed to: $PROJECT_DIR"
   fi
+
+  echo "Deployed to: $PROJECT_DIR"
 #+end_src
 
 ** Step 2.2: Verify clone
