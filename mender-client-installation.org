@@ -39,7 +39,18 @@ All code blocks are designed to be idempotent where possible.
 - Internet connection
 - Mender Cloud account with Tenant Token
 
-* Step 1: Install Mender Client
+* Step 1: Ensure Downloads directory exists
+
+#+begin_src bash :results output replace :exports both
+  if [ ! -d "$HOME/Downloads" ]; then
+      mkdir -p "$HOME/Downloads"
+      echo "Created: $HOME/Downloads"
+  else
+      echo "Already exists: $HOME/Downloads"
+  fi
+#+end_src
+
+* Step 2: Install Mender Client
 
 Direct =.deb= downloads for Mender Client 3.x are no longer publicly accessible.
 The only supported method on Ubuntu 20.04 is the official installer script.
@@ -47,9 +58,11 @@ The only supported method on Ubuntu 20.04 is the official installer script.
 #+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
 
-  mkdir -p /home/nvidia/Downloads
-  curl -fLsS https://get.mender.io -o /home/nvidia/Downloads/get-mender.sh
-  bash /home/nvidia/Downloads/get-mender.sh mender-client
+  TMPDIR=$(mktemp -d)
+  trap 'rm -rf "$TMPDIR"' EXIT
+
+  curl -fLsS https://get.mender.io -o "$TMPDIR/get-mender.sh"
+  bash "$TMPDIR/get-mender.sh" mender-client
 #+end_src
 
 Verify installation:
@@ -63,13 +76,13 @@ Expected output:
 ii  mender-client  3.5.x  arm64  Mender client for OTA software updates
 #+end_example
 
-* Step 2: Stop client before configuration
+* Step 3: Stop client before configuration
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   systemctl stop mender-client
 #+end_src
 
-* Step 3: Configure Mender Client for Mender Cloud
+* Step 4: Configure Mender Client for Mender Cloud
 
 #+begin_quote
 *ACTION REQUIRED:* Replace =<YOUR_TENANT_TOKEN>= with your actual Mender Cloud tenant token.
@@ -94,7 +107,7 @@ CONFEOF
   echo "mender.conf written"
 #+end_src
 
-* Step 4: Configure single-rootfs mode
+* Step 5: Configure single-rootfs mode
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
@@ -113,7 +126,7 @@ CONFEOF
   echo "single-rootfs.conf written"
 #+end_src
 
-* Step 5: Ensure device identity exists
+* Step 6: Ensure device identity exists
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   set -euo pipefail
@@ -124,7 +137,7 @@ CONFEOF
   echo "Created device_type file"
 #+end_src
 
-* Step 6: Configure custom device identity
+* Step 7: Configure custom device identity
 
 By default, Mender selects the Ethernet interface with the lowest =ifindex=, typically =eth0=.
 If your devices use =eth1= or =eth2= for connectivity, override the identity script.
@@ -194,7 +207,7 @@ mac=aa:bb:cc:dd:ee:ff
 Changing the identity will cause the device to appear as a new device in Mender Cloud and require re-acceptance.
 #+end_quote
 
-* Step 7: Start the client
+* Step 8: Start the client
 
 #+begin_src bash :results output replace :exports both :dir /sudo::
   systemctl reset-failed mender-client
@@ -208,7 +221,7 @@ Follow logs (run interactively):
 journalctl -u mender-client -f
 #+end_example
 
-* Step 8: Accept device in Mender Cloud
+* Step 9: Accept device in Mender Cloud
 
 #+begin_quote
 *MANUAL STEP:* Complete in Mender Cloud UI.
