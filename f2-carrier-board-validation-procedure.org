@@ -1,0 +1,201 @@
+#+TITLE: F2 Carrier Board Validation Procedure
+#+AUTHOR: Fabricio Puente-Mansilla
+#+DATE: <2026-05-04 Mon>
+#+SETUPFILE: https://fniessen.github.io/org-html-themes/org/html-theme-readtheorg.setup
+#+STARTUP: overview
+
+* Overview
+
+We found some hardware issues in the F2 PCBs manufactured by Sunsel. The boards were sent back to Sunsel for repair. They are now back at the Visiontech office and waiting for validation.
+
+The goal of this document is to provide clear instructions for testing each repaired board and completing the tracking system.
+
+* Test setup
+
+Scott is physically in the office, so we need to ask him to connect one carrier board at a time to the test bench.
+
+For the test bench, we are using Will's laptop. We already have an SSD, a Jetson Orin SoM, and fans for testing. This means we do not need to install, update, or flash the Jetson Orin during this validation.
+
+After Scott connects the F2 carrier board, he should also connect the USB serial cable from the carrier board to Will's laptop. Then we can access the Jetson Orin using =minicom=.
+
+#+BEGIN_SRC bash
+  sudo minicom -D /dev/ttyUSB0 -b 115200
+#+END_SRC
+
+#+BEGIN_QUOTE
+Tip 1: Disable flow control in =minicom=.
+
+Press =Ctrl + A=, then =Z=, then =O=. Go to =Serial Port Setup= and disable hardware and software flow control.
+
+Tip 2: To exit =minicom=, press =Ctrl + A=, then =X=, and confirm.
+#+END_QUOTE
+
+Use the default development username and password:
+
+#+BEGIN_EXAMPLE
+Username: nvidia
+Password: nvidia
+#+END_EXAMPLE
+
+* Record the board unique ID
+
+Each F2 carrier board has its own unique ID. It is important to record this value in the tracking system so we can identify each PCB during validation and later debugging.
+
+The script =get-device-id-f2.sh= is already available in the =$PATH=. This means it can be called from any location in the terminal.
+
+Run:
+
+#+BEGIN_SRC bash
+  get-device-id-f2.sh
+#+END_SRC
+
+The expected response should look similar to this:
+
+#+BEGIN_EXAMPLE
+f2_48b02df7a5ff
+#+END_EXAMPLE
+
+Record this value in the tracking system before continuing with the rest of the validation.
+
+* Check the SoM fan
+
+Once inside the Jetson Orin terminal, open the =jtop= tool. This tool should already be installed on the SSD.
+
+#+BEGIN_SRC bash
+  jtop
+#+END_SRC
+
+Inside =jtop=, go to window =6 CTRL=.
+
+In the =CTRL= page, change the fan profile to =[manual]=. Then change the PWM percentage from the minimum value to the maximum value.
+
+The RPM value should change accordingly.
+
+It is also a good idea to ask Scott to visually inspect the fan and confirm that the fan speed changes when the PWM value changes.
+
+* Enable the CAN bus
+
+Next, check the cabinet fan.
+
+The tachometer signal from the cabinet fan is connected to an MCU. The MCU is connected to the Jetson SoM through the CAN bus. Because of this, we need to enable the CAN bus from the terminal.
+
+Run the following commands:
+
+#+BEGIN_SRC bash
+  sudo modprobe can
+  sudo modprobe can_raw
+  sudo modprobe mttcan
+  sudo ip link set can0 up type can bitrate 1000000
+#+END_SRC
+
+Now verify that the CAN network interface is up:
+
+#+BEGIN_SRC bash
+  ip addr show can0
+#+END_SRC
+
+You should see something similar to this:
+
+#+BEGIN_EXAMPLE
+11: can0: <NOARP,UP,LOWER_UP,ECHO> mtu 16 qdisc pfifo_fast state UP group default qlen 10
+    link/can
+#+END_EXAMPLE
+
+* Check cabinet fan speed and temperature
+
+Now check the cabinet fan speed and temperature from the CAN bus.
+
+Run the following command:
+
+#+BEGIN_SRC bash
+  candump can0 | awk '
+  function hex2dec(h,  i, c, v, n) {
+    n=0
+    for (i=1; i<=length(h); i++) {
+      c=tolower(substr(h,i,1))
+      v = index("0123456789abcdef", c)-1
+      if (v < 0) return -1
+      n = n*16 + v
+    }
+    return n
+  }
+  function s16(x){ return (x >= 32768) ? x-65536 : x }
+
+  BEGIN { rpm="—"; temp="—" }
+
+  {
+    # Remove timestamp if it exists at the beginning: "(...)"
+    gsub(/^\([^)]*\)[[:space:]]+/, "", $0)
+
+    canid = $2
+    dlc = $3
+    gsub(/[\[\]]/, "", dlc)
+
+    if (canid == "200" && dlc >= 4) {
+      b0 = hex2dec($4); b1 = hex2dec($5); b2 = hex2dec($6); b3 = hex2dec($7)
+      if (b0>=0 && b1>=0 && b2>=0 && b3>=0) {
+        rpm = b0 + 256*b1 + 65536*b2 + 16777216*b3
+      }
+    } else if (canid == "201" && dlc >= 2) {
+      b0 = hex2dec($4); b1 = hex2dec($5)
+      if (b0>=0 && b1>=0) {
+        raw = s16(b0 + 256*b1)      # int16 little-endian
+        temp = raw / 256.0
+      }
+    }
+
+    # Print only when one of the expected CAN IDs is received
+    if (canid == "200" || canid == "201") {
+      if (temp == "—") printf("RPM: %s | Temp: —\n", rpm)
+      else             printf("RPM: %s | Temp: %.3f °C\n", rpm, temp)
+    }
+  }'
+#+END_SRC
+
+You should see output similar to this:
+
+#+BEGIN_EXAMPLE
+RPM: 495 | Temp: 32.000 °C
+RPM: 496 | Temp: 32.000 °C
+RPM: 496 | Temp: 32.000 °C
+RPM: 495 | Temp: 32.000 °C
+RPM: 495 | Temp: 31.875 °C
+#+END_EXAMPLE
+
+This confirms that the Jetson can receive the cabinet fan speed and temperature from the MCU through the CAN bus.
+
+* Check the Ethernet interfaces
+
+Finally, verify that the two Ethernet interfaces are detected.
+
+Run:
+
+#+BEGIN_SRC bash
+  lspci | grep Ethernet
+#+END_SRC
+
+You should see two Realtek Ethernet controllers, similar to this:
+
+#+BEGIN_EXAMPLE
+0008:01:00.0 Ethernet controller: Realtek Semiconductor Co., Ltd. RTL8111/8168/8411 PCI Express Gigabit Ethernet Controller (rev 15)
+0009:01:00.0 Ethernet controller: Realtek Semiconductor Co., Ltd. RTL8111/8168/8411 PCI Express Gigabit Ethernet Controller (rev 15)
+#+END_EXAMPLE
+
+If both Ethernet controllers are listed, the Ethernet hardware detection test passed.
+
+* Validation checklist
+
+For each repaired F2 carrier board, record the results in the tracking system.
+
+Use the following checklist:
+
+- Board serial number:
+- Tested by:
+- Test date:
+- Jetson serial console works: PASS / FAIL
+- SoM fan PWM control works: PASS / FAIL
+- SoM fan RPM changes with PWM: PASS / FAIL
+- Cabinet fan RPM received over CAN: PASS / FAIL
+- Cabinet fan temperature received over CAN: PASS / FAIL
+- Two Ethernet interfaces detected: PASS / FAIL
+- Notes:
