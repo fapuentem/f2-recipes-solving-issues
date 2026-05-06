@@ -14,7 +14,7 @@ The goal of this document is to provide clear instructions for testing each repa
 
 Scott is physically in the office, so we need to ask him to connect one carrier board at a time to the test bench.
 
-For the test bench, we are using Will's laptop. We already have an SSD, a Jetson Orin SoM, and fans for testing. This means we do not need to install, update, or flash the Jetson Orin during this validation.
+For the test bench, we are using Will's laptop(~ssh kilo@192.168.1.94~). We already have an SSD, a Jetson Orin SoM, and fans for testing. This means we do not need to install, update, or flash the Jetson Orin during this validation.
 
 After Scott connects the F2 carrier board, he should also connect the USB serial cable from the carrier board to Will's laptop. Then we can access the Jetson Orin using =minicom=.
 
@@ -46,16 +46,44 @@ The script =get-device-id-f2.sh= is already available in the =$PATH=. This means
 Run:
 
 #+BEGIN_SRC bash
-  get-device-id-f2.sh
+  sn-board-f2
 #+END_SRC
 
 The expected response should look similar to this:
 
 #+BEGIN_EXAMPLE
-f2_48b02df7a5ff
+0930xxxx541008103c67a080xxxx0042
 #+END_EXAMPLE
 
 Record this value in the tracking system before continuing with the rest of the validation.
+* Flash the firmware to the onboard STM32 microcontrollers
+
+The firmware should already be flashed on all boards because they have already been tested. If you need to flash the firmware again, follow these steps.
+
++ Go to the firmware directory:
+
+  #+BEGIN_SRC bash
+    cd /home/nvidia/projects/F2-App/firmware
+  #+END_SRC
+
++ Program the fifth STM32 microcontroller:
+
+  #+BEGIN_SRC sh
+    sudo ../.venv/bin/python3 update_firmware_stm32f091ccu.py
+  #+END_SRC
+
++ Program the STM32 microcontrollers:
+
+  #+BEGIN_SRC sh
+    # If any warnings appear, run the command again.
+    sudo ../.venv/bin/python3 update_firmware_stm32f091.py
+  #+END_SRC
+
++ Unlock the STM32F091 bootloader:
+
+  #+BEGIN_SRC sh
+    sudo ../.venv/bin/python3 unlock_bootloader_stm32f091.py
+  #+END_SRC
 
 * Check the SoM fan
 
